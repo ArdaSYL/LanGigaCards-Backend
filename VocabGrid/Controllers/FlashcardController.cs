@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
@@ -19,8 +20,16 @@ public class FlashcardController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
+    /// <summary>
+    /// Bir destenin kartları — ya da <paramref name="deckId"/> verilmezse
+    /// kullanıcının bütün destelerindeki kartlar.
+    ///
+    /// Deste-siz biçim istemcinin kütüphaneyi tazelemesi için: istemci
+    /// önce deste listesini alıp sonra her deste için ayrı istek atıyordu,
+    /// yani 20 destesi olan biri her açılışta 21 gidiş-dönüş yapıyordu.
+    /// </summary>
     [HttpGet]
-    public async Task<IActionResult> GetByDeck([FromQuery] int deckId)
+    public async Task<IActionResult> GetByDeck([FromQuery] int? deckId)
     {
         var userId = TryGetUserId();
         if (userId is null)
@@ -28,17 +37,21 @@ public class FlashcardController : ControllerBase
             return Unauthorized();
         }
 
-        if (!await IsDeckOwnedByUserAsync(deckId, userId.Value))
+        if (deckId is not null && !await IsDeckOwnedByUserAsync(deckId.Value, userId.Value))
         {
             return NotFound("Deck not found.");
         }
 
-        var cards = (await _unitOfWork.Repository<Vocabulary>()
-                .FindAsync(card => card.DeckId == deckId))
+        var cards = await _unitOfWork.Repository<Vocabulary>().Query()
+            .Where(card => deckId != null
+                ? card.DeckId == deckId
+                // Sahiplik desteden gelir; deste-siz kartlar paylaşılan
+                // müfredata ait, kimsenin kütüphanesinde değil.
+                : card.DeckId != null && card.Deck!.UserId == userId.Value)
             .OrderBy(card => card.WordID)
-            .Select(MapCard);
+            .ToListAsync();
 
-        return Ok(cards);
+        return Ok(cards.Select(MapCard));
     }
 
     [HttpGet("{id:int}")]

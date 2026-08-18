@@ -35,6 +35,11 @@ namespace VocabGrid.Repositories
             return await _dbSet.Where(predicate).ToListAsync();
         }
 
+        public IQueryable<T> Query()
+        {
+            return _dbSet;
+        }
+
         public async Task AddAsync(T entity)
         {
             await _dbSet.AddAsync(entity);

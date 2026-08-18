@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
@@ -23,18 +24,23 @@ public class CategoriesController : ControllerBase
     [ProducesResponseType(typeof(IEnumerable<CategoryDto>), StatusCodes.Status200OK)]
     public async Task<ActionResult<IEnumerable<CategoryDto>>> GetCategories([FromQuery] string? q = null)
     {
-        var categories = await _unitOfWork.Repository<Category>().GetAllAsync();
-        var query = categories.AsEnumerable();
+        // Süzme ve sıralama veritabanında. Eski hali önce tüm katalogu
+        // GetAllAsync ile çekip bellekte filtreliyordu; katalog bugün 15
+        // satır olduğu için görünür bir maliyeti yoktu ama aynı kalıp her
+        // okuma yolunda tekrarlanıyor. LIKE, SQL Server'ın harf
+        // büyüklüğüne duyarsız harmanlamasıyla zaten büyük-küçük harf
+        // ayrımı yapmadan eşleşir.
+        var query = _unitOfWork.Repository<Category>().Query();
 
         if (!string.IsNullOrWhiteSpace(q))
         {
-            var term = q.Trim();
+            var pattern = $"%{q.Trim()}%";
             query = query.Where(category =>
-                category.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
-                (category.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+                EF.Functions.Like(category.Name, pattern) ||
+                (category.Description != null && EF.Functions.Like(category.Description, pattern)));
         }
 
-        return Ok(query
+        return Ok(await query
             .OrderBy(category => category.Id)
             .Select(category => new CategoryDto
             {
@@ -43,6 +49,7 @@ public class CategoriesController : ControllerBase
                 Description = category.Description,
                 IconName = category.IconName,
                 ColorHex = category.ColorHex
-            }));
+            })
+            .ToListAsync());
     }
 }

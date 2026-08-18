@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
@@ -150,59 +151,63 @@ public class ProgressController : ControllerBase
             return NotFound("Deck not found.");
         }
 
-        var deckIds = deckId is not null
-            ? new[] { deckId.Value }
-            : (await _unitOfWork.Repository<Deck>()
-                    .FindAsync(deck => deck.UserId == userId.Value))
-                .Select(deck => deck.Id)
-                .ToArray();
-
-        // A deckless card is reviewable only when it belongs to the shared lesson
-        // curriculum. Orphaned deckless records are never exposed for review.
+        // Tek sorgu, tek geçiş. Buradaki eski uygulama üç ayrı listeyi
+        // belleğe çekiyordu — kullanıcının tüm desteleri, tüm müfredat
+        // bağlantıları ve kullanıcının *bütün* UserWordProgress satırları —
+        // sonra süzme, sıralama ve Take'i C# tarafında yapıyordu. Yani
+        // şemadaki indeksler hiç kullanılmıyor, take=50 istense bile
+        // ilerleme tablosunun tamamı ağdan geçiyordu.
+        //
+        // Deste-siz bir kart yalnızca paylaşılan müfredata aitse
+        // çalışılabilir; sahipsiz deste-siz kayıtlar tekrar kuyruğuna
+        // girmez. Bu kural aşağıdaki LessonVocabularies alt sorgusunda.
         var includeCurriculum = deckId is null;
-        var curriculumWordIds = includeCurriculum
-            ? (await _unitOfWork.Repository<LessonVocabulary>().GetAllAsync())
-                .Select(link => link.WordID)
-                .Distinct()
-                .ToArray()
-            : Array.Empty<int>();
-
-        var words = await _unitOfWork.Repository<Vocabulary>()
-            .FindAsync(word =>
-                (word.DeckId != null && deckIds.Contains(word.DeckId.Value)) ||
-                (includeCurriculum && word.DeckId == null && curriculumWordIds.Contains(word.WordID)));
         var now = DateTime.UtcNow;
-        var progressesByWord = (await _unitOfWork.Repository<UserWordProgress>()
-                .FindAsync(progress => progress.UserID == userId.Value))
-            .ToDictionary(progress => progress.WordID);
 
-        return Ok(words
-            .Where(word => !progressesByWord.TryGetValue(word.WordID, out var progress) ||
-                progress.NextReviewDate is null || progress.NextReviewDate <= now)
-            .OrderBy(word => progressesByWord.TryGetValue(word.WordID, out var progress)
-                ? progress.NextReviewDate ?? DateTime.MinValue
-                : DateTime.MinValue)
-            .Take(take)
-            .Select(word =>
+        var lessonLinks = _unitOfWork.Repository<LessonVocabulary>().Query();
+        var progress = _unitOfWork.Repository<UserWordProgress>().Query()
+            .Where(row => row.UserID == userId.Value);
+
+        var pool = _unitOfWork.Repository<Vocabulary>().Query()
+            .Where(word => deckId != null
+                ? word.DeckId == deckId
+                : (word.DeckId != null && word.Deck!.UserId == userId.Value)
+                  || (includeCurriculum && word.DeckId == null
+                      && lessonLinks.Any(link => link.WordID == word.WordID)));
+
+        // Sol birleştirme: ilerleme kaydı olmayan kelime hiç çalışılmamış
+        // demektir ve zamanı gelmiş sayılır.
+        var due = await pool
+            .Select(word => new
             {
-                progressesByWord.TryGetValue(word.WordID, out var progress);
-                return new
-                {
-                    WordId = word.WordID,
-                    word.DeckId,
-                    word.Term,
-                    word.Translation,
-                    word.ExampleSentence,
-                    word.ImageUrl,
-                    word.AudioUrl,
-                    MasteryLevel = progress?.MasteryLevel ?? 0,
-                    ReviewCount = progress?.ReviewCount ?? 0,
-                    IntervalDays = progress?.IntervalDays ?? 0,
-                    EaseFactor = progress?.EaseFactor ?? 2.5,
-                    LastRating = progress?.LastRating,
-                    NextReviewDate = progress?.NextReviewDate
-                };
-            }));
+                Word = word,
+                Progress = progress.FirstOrDefault(row => row.WordID == word.WordID)
+            })
+            .Where(x => x.Progress == null
+                || x.Progress.NextReviewDate == null
+                || x.Progress.NextReviewDate <= now)
+            .OrderBy(x => x.Progress == null ? 0 : 1)
+            .ThenBy(x => x.Progress!.NextReviewDate)
+            .Take(take)
+            .Select(x => new
+            {
+                WordId = x.Word.WordID,
+                x.Word.DeckId,
+                x.Word.Term,
+                x.Word.Translation,
+                x.Word.ExampleSentence,
+                x.Word.ImageUrl,
+                x.Word.AudioUrl,
+                MasteryLevel = x.Progress == null ? 0 : x.Progress.MasteryLevel,
+                ReviewCount = x.Progress == null ? 0 : x.Progress.ReviewCount,
+                IntervalDays = x.Progress == null ? 0 : x.Progress.IntervalDays,
+                EaseFactor = x.Progress == null ? 2.5 : x.Progress.EaseFactor,
+                LastRating = x.Progress == null ? null : x.Progress.LastRating,
+                NextReviewDate = x.Progress == null ? null : x.Progress.NextReviewDate
+            })
+            .ToListAsync();
+
+        return Ok(due);
     }
 
     [HttpPost("reviews/{wordId:int}")]

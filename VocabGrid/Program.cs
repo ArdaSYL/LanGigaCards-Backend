@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json.Serialization;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
@@ -83,6 +85,40 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection(SmtpSettings.SectionName));
+
+// UseExceptionHandler'ın gövdesiz bir 500 yerine ProblemDetails üretmesi için.
+builder.Services.AddProblemDetails();
+
+// Kimlik uç noktalarında hız sınırı. Parola ve altı haneli doğrulama kodu
+// deneyen tek yollar bunlar; sınır yokken bir kod, geçerli olduğu 15 dakika
+// içinde kaba kuvvetle bulunabilirdi. Bölüm anahtarı IP: e-postaya göre
+// bölmek, saldırganın başkasının hesabını kilitlemesine izin verirdi.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy(RateLimitPolicies.Credentials, context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(5),
+                QueueLimit = 0
+            }));
+
+    // Kayıt ve posta gönderen uç noktalarda sınır daha gevşek: burada
+    // korunan bir sır değil, kayıt ve e-posta kuyruğunun kötüye kullanımı.
+    options.AddPolicy(RateLimitPolicies.Registration, context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(15),
+                QueueLimit = 0
+            }));
+});
 
 // Pick the transport from configuration rather than the environment: a
 // developer with no SMTP credentials still gets a working API (codes land in
@@ -175,7 +211,16 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Yakalanmayan bir istisna aksi halde geliştirme sayfasını, yani yığın izini
+// ve kaynak parçalarını istemciye gönderiyordu. Bu, ortamdan bağımsız olarak
+// RFC 9457 ProblemDetails döndürür; ayrıntı sunucu günlüğünde kalır.
+app.UseExceptionHandler();
+
 app.UseCors("AppCors");
+
+// Kimlik doğrulamadan önce: sınıra takılan istek, parola karşılaştırma
+// maliyetine hiç girmeden reddedilmeli.
+app.UseRateLimiter();
 
 var webRoot = Path.Combine(app.Environment.ContentRootPath, "wwwroot");
 Directory.CreateDirectory(Path.Combine(webRoot, "uploads"));
