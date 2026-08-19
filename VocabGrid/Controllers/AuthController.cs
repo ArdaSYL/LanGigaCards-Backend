@@ -4,12 +4,14 @@ using System.Security.Cryptography;
 using System.Text;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
+using VocabGrid.Services;
 
 namespace VocabGrid.Controllers;
 
@@ -56,6 +58,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("register")]
+    [EnableRateLimiting(RateLimitPolicies.Registration)]
     public async Task<IActionResult> Register([FromBody] RegisterDto request)
     {
         if (!ModelState.IsValid)
@@ -99,6 +102,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("login")]
+    [EnableRateLimiting(RateLimitPolicies.Credentials)]
     public async Task<IActionResult> Login([FromBody] UserLoginDto request)
     {
         if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
@@ -152,6 +156,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("forgot-password")]
+    [EnableRateLimiting(RateLimitPolicies.Registration)]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordDto request)
     {
         if (!ModelState.IsValid)
@@ -194,6 +199,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("send-verification-code")]
+    [EnableRateLimiting(RateLimitPolicies.Registration)]
     public async Task<IActionResult> SendEmailVerificationCode([FromBody] SendEmailVerificationDto request)
     {
         if (!ModelState.IsValid)
@@ -229,6 +235,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("verify-email")]
+    [EnableRateLimiting(RateLimitPolicies.Credentials)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailDto request)
     {
         if (!ModelState.IsValid)
@@ -297,6 +304,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("reset-password")]
+    [EnableRateLimiting(RateLimitPolicies.Credentials)]
     public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordDto request)
     {
         if (!ModelState.IsValid)
