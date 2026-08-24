@@ -310,20 +310,33 @@ public class ProgressController : ControllerBase
         }
 
         var userWordProgress = progress!;
+        // Must be read before LastReviewedAt is overwritten below -- FsrsEngine
+        // needs the *previous* review's timestamp to know how many days have
+        // elapsed since then, not this one.
+        var previousReviewedAt = isNewProgress ? (DateTime?)null : userWordProgress.LastReviewedAt;
 
-        var schedule = StudyEngine.CalculateReviewSchedule(
-            userWordProgress.IntervalDays,
-            userWordProgress.EaseFactor,
+        var wordLanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user);
+        var languageProfile = await LanguageProgressEngine.GetOrCreateAsync(
+            _unitOfWork, user.Id, wordLanguageCode, user.TargetLanguage);
+
+        var schedule = FsrsEngine.ReviewCard(
+            userWordProgress.Stability,
+            userWordProgress.Difficulty,
+            previousReviewedAt,
             dto.Rating,
-            reviewedAt);
+            reviewedAt,
+            cefrLevel: languageProfile?.DifficultyMode);
 
-        userWordProgress.IntervalDays = schedule.IntervalDays;
-        userWordProgress.EaseFactor = schedule.EaseFactor;
+        userWordProgress.Stability = schedule.Stability;
+        userWordProgress.Difficulty = schedule.Difficulty;
+        // Refreshed for continuity/debugging only -- nothing computes from
+        // these anymore, see the doc comment on UserWordProgress.
+        userWordProgress.IntervalDays = Math.Max(1, (int)Math.Round((schedule.NextReviewDate - reviewedAt).TotalDays));
         userWordProgress.NextReviewDate = schedule.NextReviewDate;
         userWordProgress.LastReviewedAt = reviewedAt;
         userWordProgress.LastRating = dto.Rating;
         userWordProgress.ReviewCount++;
-        userWordProgress.MasteryLevel = Math.Clamp(userWordProgress.MasteryLevel + schedule.MasteryDelta, 0, 5);
+        userWordProgress.MasteryLevel = schedule.MasteryLevel;
         if (isNewProgress)
         {
             await progressRepository.AddAsync(userWordProgress);
@@ -349,7 +362,7 @@ public class ProgressController : ControllerBase
             ActivityType = "Review",
             // Kartın destesinden gelen dil; destesiz müfredat kartlarında
             // kullanıcının o anki hedef dili.
-            LanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user),
+            LanguageCode = wordLanguageCode,
             Result = dto.Rating,
             DurationSeconds = dto.DurationSeconds,
             XpEarned = xpEarned
