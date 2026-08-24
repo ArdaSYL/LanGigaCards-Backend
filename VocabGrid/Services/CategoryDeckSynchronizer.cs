@@ -598,7 +598,11 @@ internal static class CategoryDeckSynchronizer
     /// <c>category_music_de</c> -> <c>music</c>. Dil kodu son alt çizgiden
     /// sonra durur; slug'ın kendisi alt çizgi içerebileceği için sondan aranır.
     /// </summary>
-    private static string SlugFrom(string? starterKey)
+    /// <summary>
+    /// Deste anahtarindan sablon slug'u: <c>category_music_de</c> -> <c>music</c>.
+    /// Bos string, anahtarin bu sablon sisteminden gelmedigi anlamina gelir.
+    /// </summary>
+    internal static string SlugFrom(string? starterKey)
     {
         if (string.IsNullOrEmpty(starterKey) || !starterKey.StartsWith(StarterKeyPrefix, StringComparison.Ordinal))
         {

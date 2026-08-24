@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
@@ -44,6 +45,7 @@ public class DeckController : ControllerBase
         }
 
         var requestedCode = LanguageProgressEngine.Normalize(languageCode);
+        var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
         var allDecks = (await _unitOfWork.Repository<Deck>()
                 .FindAsync(deck => deck.UserId == userId.Value))
             .OrderByDescending(deck => deck.UpdatedAt ?? deck.CreatedAt)
@@ -52,7 +54,6 @@ public class DeckController : ControllerBase
         var decks = allDecks;
         if (requestedCode.Length > 0)
         {
-            var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
             var isCurrentTarget = LanguageProgressEngine.Normalize(user?.TargetLanguageCode) == requestedCode;
             decks = allDecks
                 .Where(deck =>
@@ -62,6 +63,8 @@ public class DeckController : ControllerBase
                 })
                 .ToList();
         }
+
+        var nativeTitles = await NativeTitlesAsync(user);
 
         var cards = (await _unitOfWork.Repository<Vocabulary>()
                 .FindAsync(card => card.DeckId != null && decks.Select(d => d.Id).Contains(card.DeckId.Value)))
@@ -87,6 +90,7 @@ public class DeckController : ControllerBase
                 CoverImageUrl = deck.CoverImageUrl,
                 StarterKey = deck.StarterKey,
                 LanguageCode = deck.LanguageCode,
+                NativeTitle = NativeTitleFor(deck, nativeTitles),
                 CreatedAt = deck.CreatedAt,
                 UpdatedAt = deck.UpdatedAt,
                 CardCount = stats.CardCount,
@@ -124,6 +128,7 @@ public class DeckController : ControllerBase
                     .FindAsync(p => p.UserID == userId.Value && wordIds.Contains(p.WordID)))
                 .ToList();
 
+        var owner = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
         var stats = ComputeDeckStats(cards, progress, DateTime.UtcNow);
         return Ok(new
         {
@@ -133,6 +138,7 @@ public class DeckController : ControllerBase
             deck.CoverImageUrl,
             deck.StarterKey,
             deck.LanguageCode,
+            NativeTitle = NativeTitleFor(deck, await NativeTitlesAsync(owner)),
             deck.CreatedAt,
             deck.UpdatedAt,
             stats.CardCount,
@@ -262,6 +268,48 @@ public class DeckController : ControllerBase
         await _unitOfWork.CompleteAsync();
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Şablon slug'undan öğrenenin ana dilindeki deste adına harita —
+    /// <c>music</c> → <c>Müzik</c>.
+    ///
+    /// Tek sorguyla bir kez kuruluyor: deste başına ayrı bir arama, on beş
+    /// destelik bir kitaplıkta on beş gidiş dönüş demekti.
+    ///
+    /// Ana dilde etiket yoksa (kataloğa yeni eklenmiş bir dil) harita o slug
+    /// için boş kalır ve istemci parantezi göstermez. İngilizceye düşmüyoruz:
+    /// ana dili Korece olan birine İngilizce bir açıklama, hiç açıklama
+    /// olmamasından daha az yardımcı olur.
+    /// </summary>
+    private async Task<Dictionary<string, string>> NativeTitlesAsync(User? user)
+    {
+        var nativeCode = LanguageProgressEngine.Normalize(user?.NativeLanguageCode);
+        if (nativeCode.Length == 0)
+        {
+            return new Dictionary<string, string>();
+        }
+
+        return await _unitOfWork.Repository<DeckTemplateLabel>().Query()
+            .Where(label => label.LanguageCode == nativeCode)
+            .Select(label => new { label.DeckTemplate.Slug, label.Title })
+            .ToDictionaryAsync(row => row.Slug, row => row.Title);
+    }
+
+    /// <summary>
+    /// Destenin ana dildeki adı, yoksa null.
+    ///
+    /// Hedef dil ana dille aynıysa da null: "Müzik (Müzik)" bilgi taşımaz.
+    /// </summary>
+    private static string? NativeTitleFor(Deck deck, IReadOnlyDictionary<string, string> nativeTitles)
+    {
+        var slug = CategoryDeckSynchronizer.SlugFrom(deck.StarterKey);
+        if (slug.Length == 0 || !nativeTitles.TryGetValue(slug, out var nativeTitle))
+        {
+            return null;
+        }
+
+        return string.Equals(nativeTitle, deck.Title, StringComparison.OrdinalIgnoreCase) ? null : nativeTitle;
     }
 
     private static (int CardCount, int DueCount, double MasteryPercentage, int ReviewsCount) ComputeDeckStats(
