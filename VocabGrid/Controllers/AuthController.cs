@@ -199,6 +199,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("send-verification-code")]
+    [EnableRateLimiting(RateLimitPolicies.Registration)]
     public async Task<IActionResult> SendEmailVerificationCode([FromBody] SendEmailVerificationDto request)
     {
         if (!ModelState.IsValid)
@@ -234,6 +235,7 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("verify-email")]
+    [EnableRateLimiting(RateLimitPolicies.Credentials)]
     public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailDto request)
     {
         if (!ModelState.IsValid)

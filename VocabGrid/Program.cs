@@ -100,27 +100,13 @@ builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepositor
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection(SmtpSettings.SectionName));
 
-// Pick the transport from configuration rather than the environment: a
-// developer with no SMTP credentials still gets a working API (codes land in
-// the database and, in Development, in the send-verification-code response),
-// while anyone who fills in Smtp:* starts sending real mail immediately.
-var smtpSettings = builder.Configuration.GetSection(SmtpSettings.SectionName).Get<SmtpSettings>() ?? new SmtpSettings();
-if (smtpSettings.IsConfigured)
-{
-    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
-}
-else
-{
-    builder.Services.AddScoped<IEmailService, EmailService>();
-}
-
-// UseExceptionHandler, govdesiz bir 500 yerine ProblemDetails uretsin diye.
+// UseExceptionHandler'ın gövdesiz bir 500 yerine ProblemDetails üretmesi için.
 builder.Services.AddProblemDetails();
 
-// Kimlik uc noktalarinda hiz siniri. Parola deneyen tek yollar bunlar;
-// sinir yokken bir parola kaba kuvvetle denenebilirdi. Bolum anahtari IP:
-// e-postaya gore bolmek, saldirganin baskasinin hesabini kilitlemesine
-// izin verirdi.
+// Kimlik uç noktalarında hız sınırı. Parola ve altı haneli doğrulama kodu
+// deneyen tek yollar bunlar; sınır yokken bir kod, geçerli olduğu 15 dakika
+// içinde kaba kuvvetle bulunabilirdi. Bölüm anahtarı IP: e-postaya göre
+// bölmek, saldırganın başkasının hesabını kilitlemesine izin verirdi.
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -135,8 +121,8 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             }));
 
-    // Kayit ve posta gonderen uc noktalarda sinir daha gevsek: burada
-    // korunan bir sir degil, kayit ve e-posta kuyrugunun kotuye kullanimi.
+    // Kayıt ve posta gönderen uç noktalarda sınır daha gevşek: burada
+    // korunan bir sır değil, kayıt ve e-posta kuyruğunun kötüye kullanımı.
     options.AddPolicy(RateLimitPolicies.Registration, context =>
         RateLimitPartition.GetFixedWindowLimiter(
             context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -147,6 +133,20 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             }));
 });
+
+// Pick the transport from configuration rather than the environment: a
+// developer with no SMTP credentials still gets a working API (codes land in
+// the database and, in Development, in the send-verification-code response),
+// while anyone who fills in Smtp:* starts sending real mail immediately.
+var smtpSettings = builder.Configuration.GetSection(SmtpSettings.SectionName).Get<SmtpSettings>() ?? new SmtpSettings();
+if (smtpSettings.IsConfigured)
+{
+    builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+}
+else
+{
+    builder.Services.AddScoped<IEmailService, EmailService>();
+}
 
 var jwtKey = builder.Configuration["Jwt:Key"];
 if (string.IsNullOrWhiteSpace(jwtKey))
