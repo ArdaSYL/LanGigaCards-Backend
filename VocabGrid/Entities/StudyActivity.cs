@@ -11,6 +11,20 @@ public class StudyActivity
 
     public DateTime OccurredAt { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Aktivitenin ait olduğu hedef dilin ISO kodu.
+    ///
+    /// İstatistik dil başına ayrıldığı için bu alan olmadan "bu ayki isabet
+    /// oranım" sorusu yanıtlanamaz: Almanca ve Japonca tekrarları aynı
+    /// toplamda birikirdi. Kodu aktiviteye yazmak, sonradan desteden
+    /// türetmekten sağlamdır — deste silinince <c>DeckId</c> null'a düşer,
+    /// yazılmış geçmiş ise olduğu gibi kalır.
+    ///
+    /// Bu alandan önceki satırlarda null; o kayıtlar dil filtresi
+    /// uygulandığında dışarıda kalır ama toplamlarda görünmeye devam eder.
+    /// </summary>
+    public string? LanguageCode { get; set; }
+
     /// <summary>Review, Quiz, Lesson vb.</summary>
     public string ActivityType { get; set; } = "Review";
 

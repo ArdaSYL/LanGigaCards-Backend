@@ -26,6 +26,16 @@ public class DailyStudySummary
 
     public DateOnly Day { get; set; }
 
+    /// <summary>
+    /// Özetin ait olduğu hedef dilin ISO kodu. Gün başına değil, gün+dil
+    /// başına tek satır: aynı gün iki dil çalışılırsa iki satır oluşur ve
+    /// istatistik ekranı hangisini gösteriyorsa onu okur.
+    ///
+    /// Bu alandan önceki satırlar boş string taşır; toplamda görünürler ama
+    /// dil filtresi uygulandığında dışarıda kalırlar.
+    /// </summary>
+    public string LanguageCode { get; set; } = string.Empty;
+
     public int ReviewCount { get; set; }
 
     /// <summary>

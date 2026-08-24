@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using VocabGrid.Data;
@@ -80,7 +81,20 @@ builder.Services.AddCors(options =>
 });
 
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options
+        .UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"))
+        // User üzerindeki "silinmemiş olsun" süzgeci, ona zorunlu bağlı her
+        // varlık için bir uyarı üretiyor (Decks, UserSettings, UserProgress...):
+        // "principal süzülürse dependent beklenmedik sonuç verebilir". Bu
+        // kodda böyle bir yol yok — hiçbir sorgu bu varlıklara User
+        // gezinmesinden ulaşmıyor, hepsi kimliği doğrulanmış (yani silinmemiş)
+        // bir kullanıcının UserId'siyle doğrudan süzülüyor.
+        //
+        // Uyarı model doğrulamasında, yani her açılışta on kez basılıyordu ve
+        // gerçek uyarıları görünmez hâle getiriyordu. Susturmanın bedeli:
+        // ileride biri User üzerinden dependent sorgularsa derleyici uyarmaz.
+        .ConfigureWarnings(warnings =>
+            warnings.Ignore(CoreEventId.PossibleIncorrectRequiredNavigationWithQueryFilterInteractionWarning)));
 
 builder.Services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();

@@ -89,6 +89,28 @@ public class DeckSummaryDto
     /// </summary>
     public string? StarterKey { get; set; }
 
+    /// <summary>Destenin öğrettiği hedef dilin ISO kodu.</summary>
+    public string? LanguageCode { get; set; }
+
+    /// <summary>
+    /// Destenin adının öğrenenin <em>ana dilindeki</em> karşılığı — "Musik"
+    /// için "Müzik".
+    ///
+    /// <para>
+    /// <see cref="Title"/> hedef dilde kalır: deste adını okumak öğrenilen
+    /// dille ilk temastır ve onu çevirmek o teması yok ederdi. Ama yeni
+    /// başlayan biri "Wissenschaft"ın ne olduğunu bilmez, o yüzden istemci
+    /// ana dildeki karşılığını yanına küçük puntoyla yazıyor.
+    /// </para>
+    ///
+    /// <para>
+    /// Yalnızca şablondan kurulmuş kategori destelerinde dolu; kullanıcının
+    /// kendi yazdığı deste adının çevirisi yoktur ve burası null kalır —
+    /// istemci de o zaman parantezi hiç göstermez.
+    /// </para>
+    /// </summary>
+    public string? NativeTitle { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public int CardCount { get; set; }

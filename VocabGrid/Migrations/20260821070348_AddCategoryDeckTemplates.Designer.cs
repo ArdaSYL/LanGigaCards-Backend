@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using VocabGrid.Data;
 
@@ -11,9 +12,11 @@ using VocabGrid.Data;
 namespace VocabGrid.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260821070348_AddCategoryDeckTemplates")]
+    partial class AddCategoryDeckTemplates
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -277,11 +280,6 @@ namespace VocabGrid.Migrations
                     b.Property<DateOnly>("Day")
                         .HasColumnType("date");
 
-                    b.Property<string>("LanguageCode")
-                        .IsRequired()
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
                     b.Property<int>("LessonCount")
                         .HasColumnType("int");
 
@@ -305,7 +303,7 @@ namespace VocabGrid.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "LanguageCode", "Day")
+                    b.HasIndex("UserId", "Day")
                         .IsUnique();
 
                     b.ToTable("DailyStudySummaries", t =>
@@ -334,10 +332,6 @@ namespace VocabGrid.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
 
-                    b.Property<string>("LanguageCode")
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
                     b.Property<string>("StarterKey")
                         .HasMaxLength(40)
                         .HasColumnType("nvarchar(40)");
@@ -355,7 +349,7 @@ namespace VocabGrid.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("UserId", "LanguageCode", "CreatedAt");
+                    b.HasIndex("UserId", "CreatedAt");
 
                     b.ToTable("Decks", t =>
                         {
@@ -40006,10 +40000,6 @@ namespace VocabGrid.Migrations
                     b.Property<int?>("DeckId")
                         .HasColumnType("int");
 
-                    b.Property<string>("LanguageCode")
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
                     b.Property<int?>("LessonId")
                         .HasColumnType("int");
 
@@ -40077,9 +40067,6 @@ namespace VocabGrid.Migrations
                     b.Property<int>("TimeSpentSeconds")
                         .HasColumnType("int");
 
-                    b.Property<int?>("WordId")
-                        .HasColumnType("int");
-
                     b.HasKey("Id");
 
                     b.HasIndex("QuizId");
@@ -40087,8 +40074,6 @@ namespace VocabGrid.Migrations
                     b.HasIndex("QuizSessionId");
 
                     b.HasIndex("SelectedOptionId");
-
-                    b.HasIndex("WordId");
 
                     b.ToTable("QuizSessionAnswers");
                 });
@@ -40111,10 +40096,6 @@ namespace VocabGrid.Migrations
 
                     b.Property<int>("DurationSeconds")
                         .HasColumnType("int");
-
-                    b.Property<string>("LanguageCode")
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
 
                     b.Property<int?>("LessonId")
                         .HasColumnType("int");
@@ -40144,8 +40125,6 @@ namespace VocabGrid.Migrations
                     b.HasIndex("WordId");
 
                     b.HasIndex("UserId", "OccurredAt");
-
-                    b.HasIndex("UserId", "LanguageCode", "OccurredAt");
 
                     b.ToTable("StudyActivities", t =>
                         {
@@ -40332,9 +40311,6 @@ namespace VocabGrid.Migrations
                     b.Property<int>("DailyGoalMinutes")
                         .HasColumnType("int");
 
-                    b.Property<DateTime?>("DeletedAt")
-                        .HasColumnType("datetime2");
-
                     b.Property<string>("Email")
                         .IsRequired()
                         .HasColumnType("nvarchar(450)");
@@ -40346,9 +40322,6 @@ namespace VocabGrid.Migrations
 
                     b.Property<string>("GoogleId")
                         .HasColumnType("nvarchar(450)");
-
-                    b.Property<bool>("IsDeleted")
-                        .HasColumnType("bit");
 
                     b.Property<bool>("IsEmailVerified")
                         .HasColumnType("bit");
@@ -40419,15 +40392,14 @@ namespace VocabGrid.Migrations
 
                     b.HasIndex("AppleId")
                         .IsUnique()
-                        .HasFilter("[AppleId] IS NOT NULL AND [IsDeleted] = 0");
+                        .HasFilter("[AppleId] IS NOT NULL");
 
                     b.HasIndex("Email")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
+                        .IsUnique();
 
                     b.HasIndex("GoogleId")
                         .IsUnique()
-                        .HasFilter("[GoogleId] IS NOT NULL AND [IsDeleted] = 0");
+                        .HasFilter("[GoogleId] IS NOT NULL");
 
                     b.ToTable("Users", t =>
                         {
@@ -40437,7 +40409,7 @@ namespace VocabGrid.Migrations
 
                             t.HasCheckConstraint("CK_Users_Level", "[Level] >= 1");
 
-                            t.HasCheckConstraint("CK_Users_TargetProficiencyLevel", "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
+                            t.HasCheckConstraint("CK_Users_TargetProficiencyLevel", "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced')");
                         });
                 });
 
@@ -40467,92 +40439,11 @@ namespace VocabGrid.Migrations
                     b.Property<int>("CategoryId")
                         .HasColumnType("int");
 
-                    b.Property<string>("LanguageCode")
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
-                    b.HasKey("UserId", "CategoryId", "LanguageCode");
+                    b.HasKey("UserId", "CategoryId");
 
                     b.HasIndex("CategoryId");
 
                     b.ToTable("UserCategories");
-                });
-
-            modelBuilder.Entity("VocabGrid.Entities.UserLanguageProfile", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int>("CurrentStreak")
-                        .HasColumnType("int");
-
-                    b.Property<string>("DifficultyMode")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<bool>("IsSetupCompleted")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("LanguageCode")
-                        .IsRequired()
-                        .HasMaxLength(8)
-                        .HasColumnType("nvarchar(8)");
-
-                    b.Property<string>("LanguageName")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("LastStudiedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<int?>("LastStudiedDeckId")
-                        .HasColumnType("int");
-
-                    b.Property<int?>("LastStudiedWordId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("Level")
-                        .HasColumnType("int");
-
-                    b.Property<int>("LongestStreak")
-                        .HasColumnType("int");
-
-                    b.Property<string>("ProficiencyLevel")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<int>("TotalXp")
-                        .HasColumnType("int");
-
-                    b.Property<int>("UserId")
-                        .HasColumnType("int");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("LastStudiedDeckId");
-
-                    b.HasIndex("LastStudiedWordId");
-
-                    b.HasIndex("UserId", "LanguageCode")
-                        .IsUnique();
-
-                    b.ToTable("UserLanguageProfiles", t =>
-                        {
-                            t.HasCheckConstraint("CK_UserLanguageProfile_Counters", "[TotalXp] >= 0 AND [CurrentStreak] >= 0 AND [LongestStreak] >= 0");
-
-                            t.HasCheckConstraint("CK_UserLanguageProfile_Level", "[Level] >= 1");
-
-                            t.HasCheckConstraint("CK_UserLanguageProfile_ProficiencyLevel", "[ProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
-                        });
                 });
 
             modelBuilder.Entity("VocabGrid.Entities.UserLearningPurpose", b =>
@@ -44412,18 +44303,11 @@ namespace VocabGrid.Migrations
                         .HasForeignKey("SelectedOptionId")
                         .OnDelete(DeleteBehavior.NoAction);
 
-                    b.HasOne("VocabGrid.Entities.Vocabulary", "Word")
-                        .WithMany()
-                        .HasForeignKey("WordId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
                     b.Navigation("Quiz");
 
                     b.Navigation("QuizSession");
 
                     b.Navigation("SelectedOption");
-
-                    b.Navigation("Word");
                 });
 
             modelBuilder.Entity("VocabGrid.Entities.StudyActivity", b =>
@@ -44492,31 +44376,6 @@ namespace VocabGrid.Migrations
                         .IsRequired();
 
                     b.Navigation("Category");
-
-                    b.Navigation("User");
-                });
-
-            modelBuilder.Entity("VocabGrid.Entities.UserLanguageProfile", b =>
-                {
-                    b.HasOne("VocabGrid.Entities.Deck", "LastStudiedDeck")
-                        .WithMany()
-                        .HasForeignKey("LastStudiedDeckId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.HasOne("VocabGrid.Entities.Vocabulary", "LastStudiedWord")
-                        .WithMany()
-                        .HasForeignKey("LastStudiedWordId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
-                    b.HasOne("VocabGrid.Entities.User", "User")
-                        .WithMany("LanguageProfiles")
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("LastStudiedDeck");
-
-                    b.Navigation("LastStudiedWord");
 
                     b.Navigation("User");
                 });
@@ -44679,8 +44538,6 @@ namespace VocabGrid.Migrations
                     b.Navigation("Decks");
 
                     b.Navigation("EmailVerificationTokens");
-
-                    b.Navigation("LanguageProfiles");
 
                     b.Navigation("PasswordResetTokens");
 

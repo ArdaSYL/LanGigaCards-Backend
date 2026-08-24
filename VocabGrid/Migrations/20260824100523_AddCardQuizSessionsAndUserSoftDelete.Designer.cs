@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using VocabGrid.Data;
 
@@ -11,9 +12,11 @@ using VocabGrid.Data;
 namespace VocabGrid.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260824100523_AddCardQuizSessionsAndUserSoftDelete")]
+    partial class AddCardQuizSessionsAndUserSoftDelete
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -40437,7 +40440,7 @@ namespace VocabGrid.Migrations
 
                             t.HasCheckConstraint("CK_Users_Level", "[Level] >= 1");
 
-                            t.HasCheckConstraint("CK_Users_TargetProficiencyLevel", "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
+                            t.HasCheckConstraint("CK_Users_TargetProficiencyLevel", "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced')");
                         });
                 });
 
@@ -40551,7 +40554,7 @@ namespace VocabGrid.Migrations
 
                             t.HasCheckConstraint("CK_UserLanguageProfile_Level", "[Level] >= 1");
 
-                            t.HasCheckConstraint("CK_UserLanguageProfile_ProficiencyLevel", "[ProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
+                            t.HasCheckConstraint("CK_UserLanguageProfile_ProficiencyLevel", "[ProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced')");
                         });
                 });
 

@@ -15,24 +15,86 @@ namespace VocabGrid.Services;
 /// veri yerinde durduğu için sonuçlar yeniden hesaplanabilir, ama ekran o güne
 /// kadar yanlış gösterir. Bu yüzden çağrı, aktivitenin eklendiği yerin hemen
 /// yanında durur.
+///
+/// Satır gün başına değil <em>gün + dil</em> başına tutulur: istatistik dil
+/// bazına ayrıldıktan sonra aynı günün Almanca ve Japonca çalışması aynı
+/// kutuda birikemez.
 /// </summary>
 internal static class DailySummaryEngine
 {
+    /// <summary>
+    /// Aynı isteğe ait birden çok aktiviteyi işler.
+    ///
+    /// Tek tek <see cref="RecordAsync"/> çağırmak burada işe yaramaz: özet
+    /// satırı veritabanından okunuyor ve henüz kaydedilmemiş bir satırı
+    /// göremiyor, dolayısıyla her çağrı aynı gün için bir satır daha eklemeye
+    /// çalışır ve benzersizlik kısıtına çarpar. Toplu giriş satırı bir kez
+    /// bulur, hepsini onun üzerine işler.
+    /// </summary>
+    internal static async Task RecordManyAsync(IUnitOfWork unitOfWork, IReadOnlyList<StudyActivity> activities)
+    {
+        foreach (var group in activities.GroupBy(activity => new
+                 {
+                     Day = DateOnly.FromDateTime(activity.OccurredAt),
+                     Language = LanguageProgressEngine.Normalize(activity.LanguageCode)
+                 }))
+        {
+            var summary = await GetOrCreateAsync(unitOfWork, group.First().UserId, group.Key.Language, group.Key.Day);
+            foreach (var activity in group)
+            {
+                Apply(summary.Row, activity);
+            }
+
+            if (!summary.IsNew)
+            {
+                unitOfWork.Repository<DailyStudySummary>().Update(summary.Row);
+            }
+        }
+    }
+
     internal static async Task RecordAsync(IUnitOfWork unitOfWork, StudyActivity activity)
     {
-        var day = DateOnly.FromDateTime(activity.OccurredAt);
-        var repository = unitOfWork.Repository<DailyStudySummary>();
+        var summary = await GetOrCreateAsync(
+            unitOfWork,
+            activity.UserId,
+            LanguageProgressEngine.Normalize(activity.LanguageCode),
+            DateOnly.FromDateTime(activity.OccurredAt));
 
-        var summary = (await repository.FindAsync(s => s.UserId == activity.UserId && s.Day == day))
-            .FirstOrDefault();
+        Apply(summary.Row, activity);
 
-        var isNewRow = summary is null;
-        if (summary is null)
+        // Yalnızca var olan satırda. Yeni eklenen satır hâlâ Added durumunda ve
+        // anahtarı geçici; EF üzerinde Update çağrılırsa "temporary value while
+        // attempting to change the entity's state to 'Modified'" hatası verir.
+        // Zaten gerek de yok — Added varlığın alanlarındaki değişiklikler
+        // SaveChanges'te INSERT'e girer.
+        if (!summary.IsNew)
         {
-            summary = new DailyStudySummary { UserId = activity.UserId, Day = day };
-            await repository.AddAsync(summary);
+            unitOfWork.Repository<DailyStudySummary>().Update(summary.Row);
+        }
+    }
+
+    private static async Task<(DailyStudySummary Row, bool IsNew)> GetOrCreateAsync(
+        IUnitOfWork unitOfWork,
+        int userId,
+        string languageCode,
+        DateOnly day)
+    {
+        var repository = unitOfWork.Repository<DailyStudySummary>();
+        var existing = (await repository.FindAsync(s =>
+                s.UserId == userId && s.LanguageCode == languageCode && s.Day == day))
+            .FirstOrDefault();
+        if (existing is not null)
+        {
+            return (existing, false);
         }
 
+        var created = new DailyStudySummary { UserId = userId, LanguageCode = languageCode, Day = day };
+        await repository.AddAsync(created);
+        return (created, true);
+    }
+
+    private static void Apply(DailyStudySummary summary, StudyActivity activity)
+    {
         switch (activity.ActivityType)
         {
             case "Review":
@@ -58,15 +120,5 @@ internal static class DailySummaryEngine
         summary.StudySeconds += activity.DurationSeconds;
         summary.XpEarned += activity.XpEarned;
         summary.UpdatedAt = DateTime.UtcNow;
-
-        // Yalnızca var olan satırda. Yeni eklenen satır hâlâ Added durumunda ve
-        // anahtarı geçici; EF üzerinde Update çağrılırsa "temporary value while
-        // attempting to change the entity's state to 'Modified'" hatası verir.
-        // Zaten gerek de yok — Added varlığın alanlarındaki değişiklikler
-        // SaveChanges'te INSERT'e girer.
-        if (!isNewRow)
-        {
-            repository.Update(summary);
-        }
     }
 }

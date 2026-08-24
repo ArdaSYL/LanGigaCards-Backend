@@ -112,7 +112,19 @@ internal static class SchemaConfiguration
         {
             e.Property(a => a.ActivityType).HasMaxLength(30);
             e.Property(a => a.Result).HasMaxLength(30);
+            e.Property(a => a.LanguageCode).HasMaxLength(8);
         });
+
+        modelBuilder.Entity<DailyStudySummary>()
+            .Property(s => s.LanguageCode).HasMaxLength(8);
+
+        modelBuilder.Entity<QuizSession>()
+            .Property(s => s.LanguageCode).HasMaxLength(8);
+
+        // Anahtarın parçası olduğu için uzunluk zorunlu: SQL Server
+        // nvarchar(max) bir sütunu birincil anahtara alamaz.
+        modelBuilder.Entity<UserCategory>()
+            .Property(uc => uc.LanguageCode).HasMaxLength(8);
 
         modelBuilder.Entity<UserSettings>(e =>
         {
@@ -148,10 +160,17 @@ internal static class SchemaConfiguration
         modelBuilder.Entity<Lesson>()
             .HasIndex(l => l.OrderIndex);
 
-        // "Bu kullanıcının deste listesi, en yeni önce" — profil ve ana ekran
-        // her açılışta bunu istiyor.
+        // "Bu kullanıcının şu dildeki deste listesi, en yeni önce" — kitaplık
+        // artık her zaman dile göre süzülüyor, o yüzden dil indeksin ikinci
+        // sütunu. Dilsiz sorgular (dışa aktarma, hesap silme) yine ilk sütundan
+        // yararlanır.
         modelBuilder.Entity<Deck>()
-            .HasIndex(d => new { d.UserId, d.CreatedAt });
+            .HasIndex(d => new { d.UserId, d.LanguageCode, d.CreatedAt });
+
+        // Aynı gerekçe istatistik tarafında: aralık sorguları dil filtresiyle
+        // birlikte geliyor.
+        modelBuilder.Entity<StudyActivity>()
+            .HasIndex(a => new { a.UserId, a.LanguageCode, a.OccurredAt });
 
         // Süresi geçmiş kodların temizliği ve "bu kullanıcının canlı kodu var mı"
         // sorgusu ExpiresAt üzerinden gidiyor.
@@ -181,7 +200,20 @@ internal static class SchemaConfiguration
                 "[TotalXp] >= 0 AND [CurrentStreak] >= 0 AND [LongestStreak] >= 0");
             t.HasCheckConstraint(
                 "CK_Users_TargetProficiencyLevel",
-                "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced')");
+                "[TargetProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
+        });
+
+        // Kullanıcı satırındaki kısıtların dil bazındaki karşılıkları: aynı
+        // sayaçlar, aynı seviye kümesi.
+        modelBuilder.Entity<UserLanguageProfile>().ToTable(t =>
+        {
+            t.HasCheckConstraint("CK_UserLanguageProfile_Level", "[Level] >= 1");
+            t.HasCheckConstraint(
+                "CK_UserLanguageProfile_Counters",
+                "[TotalXp] >= 0 AND [CurrentStreak] >= 0 AND [LongestStreak] >= 0");
+            t.HasCheckConstraint(
+                "CK_UserLanguageProfile_ProficiencyLevel",
+                "[ProficiencyLevel] IN ('Just Starting', 'Beginner', 'Intermediate', 'Advanced', 'Fluent')");
         });
 
         modelBuilder.Entity<UserWordProgress>().ToTable(t =>
