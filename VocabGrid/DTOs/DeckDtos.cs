@@ -20,6 +20,15 @@ public class CreateDeckDto
     /// </summary>
     [MaxLength(40)]
     public string? StarterKey { get; set; }
+
+    /// <summary>
+    /// Destenin öğrettiği hedef dil. Boş bırakılırsa kullanıcının o anki
+    /// hedef dili yazılır — istemcinin her deste oluşturmada dili tekrar
+    /// göndermesi gerekmesin diye. Açıkça göndermek, dil değiştirdikten
+    /// hemen sonra oluşturulan destenin doğru dile düşmesini garanti eder.
+    /// </summary>
+    [MaxLength(8)]
+    public string? LanguageCode { get; set; }
 }
 
 public class UpdateDeckDto

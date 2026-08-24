@@ -48,8 +48,8 @@ public class UpdateUserProfileDto
     // (UserController.UpdateProfile). Boşu reddetseydik, yalnızca ana dilini
     // değiştiren bir istek de reddedilirdi.
     [RegularExpression(
-        "^$|^(Just Starting|Beginner|Intermediate|Advanced)$",
-        ErrorMessage = "TargetProficiencyLevel must be Just Starting, Beginner, Intermediate, or Advanced.")]
+        "^$|^(Just Starting|Beginner|Intermediate|Advanced|Fluent)$",
+        ErrorMessage = "TargetProficiencyLevel must be Just Starting, Beginner, Intermediate, Advanced, or Fluent.")]
     public string? TargetProficiencyLevel { get; set; }
 
     // Alt sınır 0, 1 değil — aynı nedenle: denetleyici 0'ı "bu alana dokunma"

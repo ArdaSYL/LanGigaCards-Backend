@@ -51,9 +51,38 @@ public class User
     public string? RefreshToken { get; set; }
     public DateTime? RefreshTokenExpiryTime { get; set; }
 
+    /// <summary>
+    /// Hesap silindi mi.
+    ///
+    /// Silme isteği satırı kaldırmaz, yalnızca işaretler: desteler, kartlar,
+    /// ilerleme ve çalışma geçmişi veritabanında olduğu gibi kalır. Bunun iki
+    /// nedeni var. Birincisi, bu verilerin çoğu tek bir hesaba ait değil —
+    /// çalışma aktiviteleri toplu istatistiklerin, kelime ilerlemesi de
+    /// müfredat ölçümlerinin girdisi; satırın gitmesi geçmişi geriye dönük
+    /// değiştirirdi. İkincisi, yanlışlıkla silinen bir hesabın geri
+    /// getirilebilmesi.
+    ///
+    /// İşaretli hesap her yerde yok sayılır: <see cref="Data.AppDbContext"/>
+    /// üzerindeki genel sorgu süzgeci bu satırları hiçbir sorguya sokmaz, yani
+    /// giriş yapılamaz ve elde kalmış bir erişim anahtarı da işe yaramaz —
+    /// kullanıcıyı kimliğinden okuyan her yol null görür.
+    /// </summary>
+    public bool IsDeleted { get; set; }
+
+    public DateTime? DeletedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public UserSettings? Settings { get; set; }
+
+    /// <summary>
+    /// Öğrenilen her hedef dil için bir satır. Yukarıdaki
+    /// <see cref="CurrentStreak"/>, <see cref="TotalXp"/> ve
+    /// <see cref="Level"/> hesabın tamamına ait toplamlardır; dil bazındaki
+    /// karşılıkları <see cref="UserLanguageProfile"/> içindedir.
+    /// </summary>
+    public ICollection<UserLanguageProfile> LanguageProfiles { get; set; } = new List<UserLanguageProfile>();
+
     public ICollection<UserCategory> UserCategories { get; set; } = new List<UserCategory>();
     public ICollection<UserLearningPurpose> UserLearningPurposes { get; set; } = new List<UserLearningPurpose>();
     public ICollection<UserBadge> UserBadges { get; set; } = new List<UserBadge>();

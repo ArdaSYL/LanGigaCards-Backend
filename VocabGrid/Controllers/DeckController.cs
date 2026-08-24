@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
+using VocabGrid.Services;
 
 namespace VocabGrid.Controllers;
 
@@ -19,9 +20,22 @@ public class DeckController : ControllerBase
         _unitOfWork = unitOfWork;
     }
 
+    /// <summary>
+    /// Kitaplık listesi. <paramref name="languageCode"/> verildiğinde yalnızca
+    /// o hedef dilin desteleri döner — öğrenen Almancadayken Japonca destelerini
+    /// görmemeli.
+    ///
+    /// Dil kodu taşımayan desteler (alan eklenmeden önce kurulmuş, geçişte
+    /// eşleşmemiş satırlar) yalnızca kullanıcının o anki hedef dilinde
+    /// listelenir: sahipsiz kalıp kitaplıktan tamamen kaybolmaları, her dilde
+    /// birden görünmelerinden daha kötü olurdu.
+    ///
+    /// Parametre boş bırakılırsa süzme yapılmaz; hesap dışa aktarma gibi dilden
+    /// bağımsız çağrılar bu biçimi kullanır.
+    /// </summary>
     [HttpGet]
     [ProducesResponseType(typeof(IEnumerable<DeckSummaryDto>), StatusCodes.Status200OK)]
-    public async Task<ActionResult<IEnumerable<DeckSummaryDto>>> GetMyDecks()
+    public async Task<ActionResult<IEnumerable<DeckSummaryDto>>> GetMyDecks([FromQuery] string? languageCode)
     {
         var userId = TryGetUserId();
         if (userId is null)
@@ -29,10 +43,25 @@ public class DeckController : ControllerBase
             return Unauthorized();
         }
 
-        var decks = (await _unitOfWork.Repository<Deck>()
+        var requestedCode = LanguageProgressEngine.Normalize(languageCode);
+        var allDecks = (await _unitOfWork.Repository<Deck>()
                 .FindAsync(deck => deck.UserId == userId.Value))
             .OrderByDescending(deck => deck.UpdatedAt ?? deck.CreatedAt)
             .ToList();
+
+        var decks = allDecks;
+        if (requestedCode.Length > 0)
+        {
+            var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+            var isCurrentTarget = LanguageProgressEngine.Normalize(user?.TargetLanguageCode) == requestedCode;
+            decks = allDecks
+                .Where(deck =>
+                {
+                    var deckCode = LanguageProgressEngine.Normalize(deck.LanguageCode);
+                    return deckCode.Length == 0 ? isCurrentTarget : deckCode == requestedCode;
+                })
+                .ToList();
+        }
 
         var cards = (await _unitOfWork.Repository<Vocabulary>()
                 .FindAsync(card => card.DeckId != null && decks.Select(d => d.Id).Contains(card.DeckId.Value)))
@@ -57,6 +86,7 @@ public class DeckController : ControllerBase
                 Description = deck.Description,
                 CoverImageUrl = deck.CoverImageUrl,
                 StarterKey = deck.StarterKey,
+                LanguageCode = deck.LanguageCode,
                 CreatedAt = deck.CreatedAt,
                 UpdatedAt = deck.UpdatedAt,
                 CardCount = stats.CardCount,
@@ -102,6 +132,7 @@ public class DeckController : ControllerBase
             deck.Description,
             deck.CoverImageUrl,
             deck.StarterKey,
+            deck.LanguageCode,
             deck.CreatedAt,
             deck.UpdatedAt,
             stats.CardCount,
@@ -126,6 +157,13 @@ public class DeckController : ControllerBase
             return ValidationProblem(ModelState);
         }
 
+        var languageCode = LanguageProgressEngine.Normalize(dto.LanguageCode);
+        if (languageCode.Length == 0)
+        {
+            var owner = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+            languageCode = LanguageProgressEngine.Normalize(owner?.TargetLanguageCode);
+        }
+
         var deck = new Deck
         {
             UserId = userId.Value,
@@ -133,6 +171,7 @@ public class DeckController : ControllerBase
             Description = dto.Description?.Trim() ?? string.Empty,
             CoverImageUrl = string.IsNullOrWhiteSpace(dto.CoverImageUrl) ? null : dto.CoverImageUrl.Trim(),
             StarterKey = string.IsNullOrWhiteSpace(dto.StarterKey) ? null : dto.StarterKey.Trim(),
+            LanguageCode = languageCode.Length == 0 ? null : languageCode,
             CreatedAt = DateTime.UtcNow
         };
 
@@ -146,6 +185,7 @@ public class DeckController : ControllerBase
             deck.Description,
             deck.CoverImageUrl,
             deck.StarterKey,
+            deck.LanguageCode,
             deck.CreatedAt,
             deck.UpdatedAt,
             CardCount = 0,
@@ -190,6 +230,7 @@ public class DeckController : ControllerBase
             deck.Description,
             deck.CoverImageUrl,
             deck.StarterKey,
+            deck.LanguageCode,
             deck.CreatedAt,
             deck.UpdatedAt
 });

@@ -65,10 +65,14 @@ internal static class CatalogSeedData
                 .HasForeignKey(s => s.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // Bir kullanıcının bir günü için tek satır. Benzersizlik burada
-            // yalnızca bir kural değil, doğruluk şartı: ikinci bir satır
-            // oluşabilseydi aynı gün iki kez sayılırdı.
-            e.HasIndex(s => new { s.UserId, s.Day }).IsUnique();
+            // Bir kullanıcının bir günü ve bir dili için tek satır.
+            // Benzersizlik burada yalnızca bir kural değil, doğruluk şartı:
+            // ikinci bir satır oluşabilseydi aynı gün iki kez sayılırdı.
+            //
+            // Dil de anahtara dahil, çünkü istatistik dil başına ayrıldı: aynı
+            // gün hem Almanca hem Japonca çalışan biri iki satır üretir ve
+            // ekran hangi dili gösteriyorsa onu okur.
+            e.HasIndex(s => new { s.UserId, s.LanguageCode, s.Day }).IsUnique();
 
             e.ToTable(t => t.HasCheckConstraint(
                 "CK_DailyStudySummary_Counters",

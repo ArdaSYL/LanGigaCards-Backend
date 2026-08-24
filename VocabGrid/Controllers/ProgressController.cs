@@ -109,12 +109,16 @@ public class ProgressController : ControllerBase
             LessonId = lessonId,
             OccurredAt = occurredAt,
             ActivityType = "Lesson",
+            // Dersler paylaşılan müfredattan geliyor ve kendi dil kodlarını
+            // taşımıyor; öğrenenin o anki hedef dili en doğru karşılık.
+            LanguageCode = LanguageProgressEngine.Normalize(user.TargetLanguageCode),
             Result = dto.Completed ? "Completed" : null,
             DurationSeconds = dto.StudyDurationSeconds,
             XpEarned = dto.Completed ? 5 : 0
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, activity.XpEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, occurredAt);
@@ -132,8 +136,28 @@ public class ProgressController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Tekrar sırası.
+    ///
+    /// <para>
+    /// <paramref name="languageCode"/> verildiğinde yalnızca o hedef dilin
+    /// desteleri taranır — Almanca çalışırken Japonca kartlarının kuyruğa
+    /// karışması, dil başına ayrılmış bir kitaplıkta anlamsız olurdu.
+    /// </para>
+    ///
+    /// <para>
+    /// Sıra ayrıca kaldığı yerden devam eder: o dilde en son çalışılan
+    /// kelimenin destesindeki kartlar öne alınır. Öğrenen uygulamayı kapatıp
+    /// döndüğünde yarım bıraktığı desteyi baştan aramak zorunda kalmıyor.
+    /// Bunun dışındaki sıralama değişmedi — hiç çalışılmamış kartlar önce,
+    /// sonra tekrar tarihi en eski olanlar.
+    /// </para>
+    /// </summary>
     [HttpGet("reviews/due")]
-    public async Task<IActionResult> GetDueReviews([FromQuery] int? deckId, [FromQuery] int take = 50)
+    public async Task<IActionResult> GetDueReviews(
+        [FromQuery] int? deckId,
+        [FromQuery] int take = 50,
+        [FromQuery] string? languageCode = null)
     {
         var userId = TryGetUserId();
         if (userId is null)
@@ -150,6 +174,25 @@ public class ProgressController : ControllerBase
         {
             return NotFound("Deck not found.");
         }
+
+        var code = LanguageProgressEngine.Normalize(languageCode);
+        var languageProfile = code.Length == 0
+            ? null
+            : (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == userId.Value && p.LanguageCode == code)).FirstOrDefault();
+
+        // Kaldığı yer: o dilde en son çalışılan kelime ve destesi.
+        //
+        // Kelimenin kendisi çoğu zaman kuyrukta olmaz — az önce çalışıldığı
+        // için tekrar tarihi ileri atılmıştır. Ama "Again" denmişse on dakika
+        // sonra yeniden gelir ve o durumda ilk sırada olması gerekir: öğrenen
+        // hatırlayamadığını söylediği kelimeye dönmek ister. Kuyrukta değilse
+        // bu sıralama hiçbir şeyi değiştirmez.
+        //
+        // Destesi ise her hâlükârda öne alınır; asıl "kaldığı yerden devam"
+        // etkisi buradan geliyor.
+        var resumeDeckId = languageProfile?.LastStudiedDeckId;
+        var resumeWordId = languageProfile?.LastStudiedWordId;
 
         // Tek sorgu, tek geçiş. Buradaki eski uygulama üç ayrı listeyi
         // belleğe çekiyordu — kullanıcının tüm desteleri, tüm müfredat
@@ -168,10 +211,16 @@ public class ProgressController : ControllerBase
         var progress = _unitOfWork.Repository<UserWordProgress>().Query()
             .Where(row => row.UserID == userId.Value);
 
+        // Dil süzgeci yalnızca destelerdeki kartlara uygulanıyor. Müfredat
+        // kartlarının kendi dil kodu yok; onlar zaten kullanıcının hedef diline
+        // göre üretiliyor ve dil verildiğinde kuyruğa yalnızca o dil hedefse
+        // giriyorlar (aşağıdaki includeCurriculum koşulu değişmedi, üstüne dil
+        // eşleşmesi eklendi).
         var pool = _unitOfWork.Repository<Vocabulary>().Query()
             .Where(word => deckId != null
                 ? word.DeckId == deckId
-                : (word.DeckId != null && word.Deck!.UserId == userId.Value)
+                : (word.DeckId != null && word.Deck!.UserId == userId.Value
+                      && (code == "" || word.Deck!.LanguageCode == code))
                   || (includeCurriculum && word.DeckId == null
                       && lessonLinks.Any(link => link.WordID == word.WordID)));
 
@@ -186,7 +235,9 @@ public class ProgressController : ControllerBase
             .Where(x => x.Progress == null
                 || x.Progress.NextReviewDate == null
                 || x.Progress.NextReviewDate <= now)
-            .OrderBy(x => x.Progress == null ? 0 : 1)
+            .OrderBy(x => resumeWordId != null && x.Word.WordID == resumeWordId ? 0 : 1)
+            .ThenBy(x => resumeDeckId != null && x.Word.DeckId == resumeDeckId ? 0 : 1)
+            .ThenBy(x => x.Progress == null ? 0 : 1)
             .ThenBy(x => x.Progress!.NextReviewDate)
             .Take(take)
             .Select(x => new
@@ -296,12 +347,16 @@ public class ProgressController : ControllerBase
             DeckId = word.DeckId,
             OccurredAt = reviewedAt,
             ActivityType = "Review",
+            // Kartın destesinden gelen dil; destesiz müfredat kartlarında
+            // kullanıcının o anki hedef dili.
+            LanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user),
             Result = dto.Rating,
             DurationSeconds = dto.DurationSeconds,
             XpEarned = xpEarned
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, xpEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, reviewedAt);
@@ -321,8 +376,12 @@ public class ProgressController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// Seri bilgisi. <paramref name="languageCode"/> verildiğinde yalnızca o
+    /// dilde çalışılan günler sayılır.
+    /// </summary>
     [HttpGet("streak")]
-    public async Task<IActionResult> GetStreak()
+    public async Task<IActionResult> GetStreak([FromQuery] string? languageCode = null)
     {
         var userId = TryGetUserId();
         if (userId is null)
@@ -336,14 +395,22 @@ public class ProgressController : ControllerBase
             return Unauthorized();
         }
 
+        var code = LanguageProgressEngine.Normalize(languageCode);
         var activityDates = (await _unitOfWork.Repository<StudyActivity>()
-                .FindAsync(activity => activity.UserId == user.Id))
+                .FindAsync(activity => activity.UserId == user.Id &&
+                    (code == "" || activity.LanguageCode == code)))
             .Select(activity => activity.OccurredAt);
+
+        var recordedLongest = code.Length == 0
+            ? user.LongestStreak
+            : (await _unitOfWork.Repository<UserLanguageProfile>()
+                    .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
+                .FirstOrDefault()?.LongestStreak ?? 0;
 
         return Ok(new
         {
             CurrentStreak = StudyEngine.CalculateCurrentStreak(activityDates, DateTime.UtcNow),
-            LongestStreak = Math.Max(user.LongestStreak, StudyEngine.CalculateLongestStreak(activityDates)),
+            LongestStreak = Math.Max(recordedLongest, StudyEngine.CalculateLongestStreak(activityDates)),
             user.DailyGoalMinutes
         });
     }
@@ -361,7 +428,8 @@ public class ProgressController : ControllerBase
     [HttpGet("daily-summary")]
     public async Task<IActionResult> GetDailySummary(
         [FromQuery] DateOnly? from = null,
-        [FromQuery] DateOnly? to = null)
+        [FromQuery] DateOnly? to = null,
+        [FromQuery] string? languageCode = null)
     {
         var userId = TryGetUserId();
         if (userId is null)
@@ -379,13 +447,30 @@ public class ProgressController : ControllerBase
             return BadRequest(new { Message = "'from' tarihi 'to' tarihinden sonra olamaz." });
         }
 
+        var code = LanguageProgressEngine.Normalize(languageCode);
         var summaries = await _unitOfWork.Repository<DailyStudySummary>()
             .FindAsync(summary =>
                 summary.UserId == userId.Value &&
+                (code == "" || summary.LanguageCode == code) &&
                 summary.Day >= start &&
                 summary.Day <= end);
 
-        var days = summaries.OrderBy(summary => summary.Day).ToList();
+        // Dil süzgeci yokken aynı günün birden çok dile ait satırı olabilir;
+        // ekranın istediği tek bir gün olduğu için birleştiriliyorlar.
+        var days = summaries
+            .GroupBy(summary => summary.Day)
+            .Select(group => new DailyStudySummary
+            {
+                Day = group.Key,
+                ReviewCount = group.Sum(s => s.ReviewCount),
+                CorrectCount = group.Sum(s => s.CorrectCount),
+                QuizCount = group.Sum(s => s.QuizCount),
+                LessonCount = group.Sum(s => s.LessonCount),
+                StudySeconds = group.Sum(s => s.StudySeconds),
+                XpEarned = group.Sum(s => s.XpEarned)
+            })
+            .OrderBy(summary => summary.Day)
+            .ToList();
 
         return Ok(new
         {

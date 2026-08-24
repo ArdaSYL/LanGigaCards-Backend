@@ -16,6 +16,13 @@ public class QuizSession
     public int? DeckId { get; set; }
     public Deck? Deck { get; set; }
 
+    /// <summary>
+    /// Oturumun ait olduğu hedef dilin ISO kodu. Kart quizleri kullanıcının
+    /// kendi destelerinden üretiliyor ve istatistik dil başına ayrıldığı için
+    /// oturumun da hangi dile yazıldığı belli olmalı.
+    /// </summary>
+    public string? LanguageCode { get; set; }
+
     public int TotalQuestions { get; set; }
     public int CorrectCount { get; set; }
     public int WrongCount { get; set; }
@@ -35,8 +42,20 @@ public class QuizSessionAnswer
     public int QuizSessionId { get; set; }
     public QuizSession QuizSession { get; set; } = null!;
 
+    /// <summary>
+    /// Ders soru bankasındaki soru. Kart quizlerinde null: o sorular önceden
+    /// yazılmış değil, öğrenenin kendi kartlarından anlık üretiliyor —
+    /// karşılığı <see cref="WordId"/>.
+    /// </summary>
     public int? QuizId { get; set; }
     public Quiz? Quiz { get; set; }
+
+    /// <summary>
+    /// Kart quizinde sorulan kelime. "Tamamlama" ölçüsü buradan çıkıyor:
+    /// destenin kaç ayrı kelimesi quizde gösterilmiş.
+    /// </summary>
+    public int? WordId { get; set; }
+    public Vocabulary? Word { get; set; }
 
     public int? SelectedOptionId { get; set; }
     public QuizOption? SelectedOption { get; set; }

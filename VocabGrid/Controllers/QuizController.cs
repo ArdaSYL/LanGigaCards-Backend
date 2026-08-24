@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using VocabGrid.DTOs;
 using VocabGrid.Entities;
 using VocabGrid.Interfaces;
@@ -41,6 +42,252 @@ public class QuizController : ControllerBase
         }
 
         return Ok(await BuildQuestionPayloadsAsync(questions));
+    }
+
+    /// <summary>
+    /// Tamamlanmış bir kart quizini kaydeder ve iki ölçüyü döndürür:
+    /// <em>doğruluk</em> ve <em>tamamlama</em>.
+    ///
+    /// <para>
+    /// Doğruluk yalnızca <em>bu</em> quize bakar: cevaplanan soruların kaçı
+    /// doğru. Geçmiş oturumlar buna karışmaz — öğrenenin sorduğu soru "az önce
+    /// nasıl gitti".
+    /// </para>
+    ///
+    /// <para>
+    /// Tamamlama ise birikimlidir ve <em>görüntülenen kelime sayısına</em>
+    /// bakar: kapsamdaki (deste ya da tüm kitaplık) kaç ayrı kelime bugüne
+    /// kadar quizde önüne çıktı. Doğru bilinip bilinmemesi tamamlamayı
+    /// etkilemez; o zaten doğruluğun ölçtüğü şey.
+    /// </para>
+    ///
+    /// <para>
+    /// Ders quizlerinden (<c>POST sessions</c>) ayrı bir yol: orada sorular
+    /// sunucudaki bankadan gelir ve tek tek doğrulanır. Burada sorular
+    /// öğrenenin kendi kartlarından istemcide üretiliyor, sunucuda karşılığı
+    /// yok; doğrulanabilecek tek şey kelimelerin gerçekten kullanıcıya ait
+    /// olduğu ve bu kontrol aşağıda yapılıyor.
+    /// </para>
+    /// </summary>
+    [HttpPost("card-sessions")]
+    public async Task<IActionResult> SubmitCardQuiz([FromBody] SubmitCardQuizDto dto)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return ValidationProblem(ModelState);
+        }
+
+        var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
+        Deck? deck = null;
+        if (dto.DeckId is not null)
+        {
+            deck = await _unitOfWork.Repository<Deck>().GetByIdAsync(dto.DeckId.Value);
+            if (deck is null || deck.UserId != user.Id)
+            {
+                return NotFound("Deck not found.");
+            }
+        }
+
+        var languageCode = LanguageProgressEngine.Normalize(dto.LanguageCode);
+        if (languageCode.Length == 0)
+        {
+            languageCode = LanguageProgressEngine.Normalize(deck?.LanguageCode);
+        }
+
+        if (languageCode.Length == 0)
+        {
+            languageCode = LanguageProgressEngine.Normalize(user.TargetLanguageCode);
+        }
+
+        // Yalnızca kullanıcının kendi kartları sayılır. İstemci kendi
+        // kitaplığından ürettiği için normalde hepsi geçer; süzgeç, uydurulmuş
+        // bir kelime kimliğinin başkasının kartını istatistiğe sokmasını
+        // engelliyor.
+        var answeredIds = dto.Answers.Select(answer => answer.WordId).Distinct().ToList();
+        var ownedWords = await _unitOfWork.Repository<Vocabulary>().Query()
+            .Where(word => answeredIds.Contains(word.WordID)
+                           && word.DeckId != null
+                           && word.Deck!.UserId == user.Id)
+            .Select(word => new { word.WordID, word.DeckId })
+            .ToListAsync();
+        var deckByWord = ownedWords.ToDictionary(word => word.WordID, word => word.DeckId);
+
+        var answers = dto.Answers.Where(answer => deckByWord.ContainsKey(answer.WordId)).ToList();
+        if (answers.Count == 0)
+        {
+            return BadRequest("None of the submitted words belong to the signed-in user.");
+        }
+
+        var completedAt = DateTime.UtcNow;
+        var graded = answers.Where(answer => !answer.Skipped).ToList();
+        var correctCount = graded.Count(answer => answer.IsCorrect);
+
+        var session = new QuizSession
+        {
+            UserId = user.Id,
+            DeckId = deck?.Id,
+            LanguageCode = languageCode,
+            TotalQuestions = answers.Count,
+            CorrectCount = correctCount,
+            WrongCount = graded.Count - correctCount,
+            SkippedCount = answers.Count - graded.Count,
+            ScorePoints = correctCount,
+            StartedAt = completedAt.AddSeconds(-answers.Sum(answer => answer.TimeSpentSeconds)),
+            CompletedAt = completedAt,
+            Answers = answers.Select(answer => new QuizSessionAnswer
+            {
+                WordId = answer.WordId,
+                IsCorrect = answer.Skipped ? null : answer.IsCorrect,
+                IsSkipped = answer.Skipped,
+                TimeSpentSeconds = answer.TimeSpentSeconds,
+                PointsEarned = !answer.Skipped && answer.IsCorrect ? 1 : 0
+            }).ToList()
+        };
+        await _unitOfWork.Repository<QuizSession>().AddAsync(session);
+
+        // Soru başına bir aktivite. Tamamlama ölçüsü "kaç ayrı kelime
+        // gösterildi" sorusunu soruyor ve bunu yanıtlayabilmek için hangi
+        // kelimelerin göründüğü kaydedilmek zorunda — oturum başına tek bir
+        // özet satırı bu bilgiyi taşıyamaz.
+        var activities = answers.Select(answer => new StudyActivity
+        {
+            UserId = user.Id,
+            WordId = answer.WordId,
+            DeckId = deckByWord[answer.WordId],
+            OccurredAt = completedAt,
+            ActivityType = "Quiz",
+            LanguageCode = languageCode,
+            Result = answer.Skipped ? "Skipped" : answer.IsCorrect ? "Correct" : "Wrong",
+            DurationSeconds = answer.TimeSpentSeconds,
+            XpEarned = !answer.Skipped && answer.IsCorrect ? 1 : 0
+        }).ToList();
+
+        foreach (var activity in activities)
+        {
+            await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
+        }
+
+        await DailySummaryEngine.RecordManyAsync(_unitOfWork, activities);
+        await LanguageProgressEngine.RecordManyAsync(_unitOfWork, activities, user.TargetLanguage);
+
+        var xpEarned = activities.Sum(activity => activity.XpEarned);
+        StudyEngine.ApplyXp(user, xpEarned);
+        await StudyEngine.UpdateStreakAsync(_unitOfWork, user, completedAt);
+
+        var newlyUnlocked = await AchievementEvaluator.UnlockEligibleAsync(_unitOfWork, user, activities[^1]);
+        await _unitOfWork.CompleteAsync();
+
+        var completion = await ComputeCompletionAsync(user.Id, deck?.Id, languageCode);
+
+        return Ok(new
+        {
+            SessionId = session.Id,
+            session.TotalQuestions,
+            session.CorrectCount,
+            session.WrongCount,
+            session.SkippedCount,
+            // Bu quizin doğruluğu. Atlanan sorular paydada yok: cevaplanmamış
+            // bir soru ne bilindi ne bilinmedi.
+            AccuracyPercent = graded.Count == 0 ? 0 : Math.Round(correctCount * 100.0 / graded.Count, 1),
+            AnsweredQuestions = graded.Count,
+            // Tamamlama: kapsamdaki kaç ayrı kelime bugüne kadar quizde
+            // gösterildi.
+            WordsSeen = completion.WordsSeen,
+            WordsInScope = completion.WordsInScope,
+            CompletionPercent = completion.Percent,
+            XpEarned = xpEarned,
+            NewlyUnlockedAchievements = newlyUnlocked.Select(badge => new { badge.Id, badge.Name, badge.Description, badge.Icon })
+        });
+    }
+
+    /// <summary>
+    /// Quiz tamamlama durumu — quiz çözmeden, yalnızca göstermek için.
+    ///
+    /// Quiz ekranı bu değeri açılışta okur; sonuç ekranındaki tamamlama ise
+    /// gönderim yanıtından gelir. İkisi aynı hesabı kullanır.
+    /// </summary>
+    [HttpGet("card-completion")]
+    public async Task<IActionResult> GetCardCompletion(
+        [FromQuery] int? deckId,
+        [FromQuery] string? languageCode)
+    {
+        var userId = TryGetUserId();
+        if (userId is null)
+        {
+            return Unauthorized();
+        }
+
+        if (deckId is not null)
+        {
+            var deck = await _unitOfWork.Repository<Deck>().GetByIdAsync(deckId.Value);
+            if (deck is null || deck.UserId != userId.Value)
+            {
+                return NotFound("Deck not found.");
+            }
+        }
+
+        var code = LanguageProgressEngine.Normalize(languageCode);
+        if (code.Length == 0)
+        {
+            var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+            code = LanguageProgressEngine.Normalize(user?.TargetLanguageCode);
+        }
+
+        var completion = await ComputeCompletionAsync(userId.Value, deckId, code);
+        return Ok(new
+        {
+            WordsSeen = completion.WordsSeen,
+            WordsInScope = completion.WordsInScope,
+            CompletionPercent = completion.Percent
+        });
+    }
+
+    /// <summary>
+    /// Kapsamdaki kelimelerin kaçının quizde gösterildiğini hesaplar.
+    ///
+    /// Kapsam bir desteyse o destenin kartları, değilse kullanıcının o dildeki
+    /// bütün kartları. "Gösterildi" ölçüsü quiz aktivitelerindeki ayrı kelime
+    /// kimliklerinden çıkıyor; aynı kelimeyi ikinci kez görmek tamamlamayı
+    /// ilerletmez.
+    /// </summary>
+    private async Task<(int WordsSeen, int WordsInScope, double Percent)> ComputeCompletionAsync(
+        int userId,
+        int? deckId,
+        string languageCode)
+    {
+        var scope = _unitOfWork.Repository<Vocabulary>().Query()
+            .Where(word => word.DeckId != null && word.Deck!.UserId == userId);
+
+        scope = deckId is not null
+            ? scope.Where(word => word.DeckId == deckId)
+            : scope.Where(word => word.Deck!.LanguageCode == languageCode);
+
+        var wordsInScope = await scope.CountAsync();
+        if (wordsInScope == 0)
+        {
+            return (0, 0, 0);
+        }
+
+        var seenIds = _unitOfWork.Repository<StudyActivity>().Query()
+            .Where(activity => activity.UserId == userId
+                               && activity.ActivityType == "Quiz"
+                               && activity.WordId != null)
+            .Select(activity => activity.WordId!.Value);
+
+        var wordsSeen = await scope.Where(word => seenIds.Contains(word.WordID)).CountAsync();
+
+        return (wordsSeen, wordsInScope, Math.Round(wordsSeen * 100.0 / wordsInScope, 1));
     }
 
     [HttpPost("sessions")]
@@ -253,12 +500,14 @@ public class QuizController : ControllerBase
             LessonId = session.LessonId,
             OccurredAt = submittedAt,
             ActivityType = "Quiz",
+            LanguageCode = LanguageProgressEngine.Normalize(user.TargetLanguageCode),
             Result = dto.Skip ? "Skipped" : isCorrect ? "Correct" : "Wrong",
             DurationSeconds = dto.TimeSpentSeconds,
             XpEarned = pointsEarned
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, pointsEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, submittedAt);

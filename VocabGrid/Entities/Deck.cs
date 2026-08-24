@@ -37,6 +37,22 @@ public class Deck
     [MaxLength(40)]
     public string? StarterKey { get; set; }
 
+    /// <summary>
+    /// Destenin öğrettiği hedef dilin ISO kodu — <c>de</c>, <c>ja</c>.
+    ///
+    /// Kitaplık artık dile göre ayrılıyor: Almanca çalışan biri Japonca
+    /// destelerini görmemeli, o destelerdeki tekrarlar da Almancanın
+    /// istatistiğine yazılmamalı.
+    ///
+    /// Kod destenin üzerinde saklanıyor çünkü kullanıcının o anki hedef
+    /// dilinden türetilemez — deste aylar önce, başka bir hedef dil
+    /// seçiliyken kurulmuş olabilir. Bu alandan önce oluşmuş destelere geçiş
+    /// sırasında sahibinin o günkü hedef dili yazıldı; null yalnızca dili
+    /// belirlenemeyen satırlarda kalır ve o desteler her dilde görünür.
+    /// </summary>
+    [MaxLength(8)]
+    public string? LanguageCode { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
 

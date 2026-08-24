@@ -89,6 +89,9 @@ public class DeckSummaryDto
     /// </summary>
     public string? StarterKey { get; set; }
 
+    /// <summary>Destenin öğrettiği hedef dilin ISO kodu.</summary>
+    public string? LanguageCode { get; set; }
+
     public DateTime CreatedAt { get; set; }
     public DateTime? UpdatedAt { get; set; }
     public int CardCount { get; set; }
