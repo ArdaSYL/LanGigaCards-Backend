@@ -42,13 +42,10 @@ internal static class DailySummaryEngine
             var summary = await GetOrCreateAsync(unitOfWork, group.First().UserId, group.Key.Language, group.Key.Day);
             foreach (var activity in group)
             {
-                Apply(summary.Row, activity);
+                Apply(summary, activity);
             }
 
-            if (!summary.IsNew)
-            {
-                unitOfWork.Repository<DailyStudySummary>().Update(summary.Row);
-            }
+            unitOfWork.Repository<DailyStudySummary>().Update(summary);
         }
     }
 
@@ -60,37 +57,31 @@ internal static class DailySummaryEngine
             LanguageProgressEngine.Normalize(activity.LanguageCode),
             DateOnly.FromDateTime(activity.OccurredAt));
 
-        Apply(summary.Row, activity);
-
-        // Yalnızca var olan satırda. Yeni eklenen satır hâlâ Added durumunda ve
-        // anahtarı geçici; EF üzerinde Update çağrılırsa "temporary value while
-        // attempting to change the entity's state to 'Modified'" hatası verir.
-        // Zaten gerek de yok — Added varlığın alanlarındaki değişiklikler
-        // SaveChanges'te INSERT'e girer.
-        if (!summary.IsNew)
-        {
-            unitOfWork.Repository<DailyStudySummary>().Update(summary.Row);
-        }
+        Apply(summary, activity);
+        unitOfWork.Repository<DailyStudySummary>().Update(summary);
     }
 
-    private static async Task<(DailyStudySummary Row, bool IsNew)> GetOrCreateAsync(
+    /// <summary>
+    /// Resolves via <see cref="ConcurrentSingleton"/>, which persists a
+    /// genuinely new row immediately rather than leaving it for the
+    /// caller's own later SaveChanges -- so by the time this returns, the
+    /// row always already exists in the database (real key, tracked as
+    /// Unchanged, not Added), whether it was found or just created. Callers
+    /// can always safely call Update() on the result.
+    /// </summary>
+    private static Task<DailyStudySummary> GetOrCreateAsync(
         IUnitOfWork unitOfWork,
         int userId,
         string languageCode,
         DateOnly day)
     {
         var repository = unitOfWork.Repository<DailyStudySummary>();
-        var existing = (await repository.FindAsync(s =>
-                s.UserId == userId && s.LanguageCode == languageCode && s.Day == day))
-            .FirstOrDefault();
-        if (existing is not null)
-        {
-            return (existing, false);
-        }
-
-        var created = new DailyStudySummary { UserId = userId, LanguageCode = languageCode, Day = day };
-        await repository.AddAsync(created);
-        return (created, true);
+        return ConcurrentSingleton.GetOrCreateAsync(
+            unitOfWork,
+            find: async () => (await repository.FindAsync(s =>
+                    s.UserId == userId && s.LanguageCode == languageCode && s.Day == day))
+                .FirstOrDefault(),
+            create: () => new DailyStudySummary { UserId = userId, LanguageCode = languageCode, Day = day });
     }
 
     private static void Apply(DailyStudySummary summary, StudyActivity activity)

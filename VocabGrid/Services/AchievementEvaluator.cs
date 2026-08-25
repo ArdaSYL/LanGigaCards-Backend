@@ -44,13 +44,28 @@ public static class AchievementEvaluator
                 continue;
             }
 
-            await unitOfWork.Repository<UserBadge>().AddAsync(new UserBadge
+            var badgeRepository = unitOfWork.Repository<UserBadge>();
+            var (_, wasCreated) = await ConcurrentSingleton.GetOrCreateWithStatusAsync(
+                unitOfWork,
+                find: async () => (await badgeRepository.FindAsync(ub =>
+                        ub.UserId == user.Id && ub.BadgeId == badge.Id))
+                    .FirstOrDefault(),
+                create: () => new UserBadge
+                {
+                    UserId = user.Id,
+                    BadgeId = badge.Id,
+                    UnlockedAt = DateTime.UtcNow
+                });
+
+            // Two concurrent requests can both newly qualify for the same
+            // badge at once (e.g. two reviews crossing the unlock threshold
+            // in the same instant); only report it to whichever one
+            // actually won -- the other already sees it unlocked and has
+            // nothing new to tell the caller.
+            if (wasCreated)
             {
-                UserId = user.Id,
-                BadgeId = badge.Id,
-                UnlockedAt = DateTime.UtcNow
-            });
-            newlyUnlocked.Add(badge);
+                newlyUnlocked.Add(badge);
+            }
         }
 
         return newlyUnlocked;

@@ -293,27 +293,27 @@ public class ProgressController : ControllerBase
         }
 
         var progressRepository = _unitOfWork.Repository<UserWordProgress>();
-        var progress = (await progressRepository.FindAsync(candidate =>
-                candidate.UserID == user.Id && candidate.WordID == word.WordID))
-            .FirstOrDefault();
         var reviewedAt = DateTime.UtcNow;
 
-        var isNewProgress = progress is null;
-        if (isNewProgress)
-        {
-            progress = new UserWordProgress
+        var userWordProgress = await ConcurrentSingleton.GetOrCreateAsync(
+            _unitOfWork,
+            find: async () => (await progressRepository.FindAsync(candidate =>
+                    candidate.UserID == user.Id && candidate.WordID == word.WordID))
+                .FirstOrDefault(),
+            create: () => new UserWordProgress
             {
                 UserID = user.Id,
                 WordID = word.WordID,
                 LastReviewedAt = reviewedAt
-            };
-        }
+            });
 
-        var userWordProgress = progress!;
         // Must be read before LastReviewedAt is overwritten below -- FsrsEngine
         // needs the *previous* review's timestamp to know how many days have
-        // elapsed since then, not this one.
-        var previousReviewedAt = isNewProgress ? (DateTime?)null : userWordProgress.LastReviewedAt;
+        // elapsed since then, not this one. For a first-time review
+        // (Stability still at its zero default) FsrsEngine never looks at
+        // this value, so it not being meaningful yet for a freshly-created
+        // row doesn't matter.
+        var previousReviewedAt = userWordProgress.LastReviewedAt;
 
         var wordLanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user);
         var languageProfile = await LanguageProgressEngine.GetOrCreateAsync(
@@ -337,14 +337,10 @@ public class ProgressController : ControllerBase
         userWordProgress.LastRating = dto.Rating;
         userWordProgress.ReviewCount++;
         userWordProgress.MasteryLevel = schedule.MasteryLevel;
-        if (isNewProgress)
-        {
-            await progressRepository.AddAsync(userWordProgress);
-        }
-        else
-        {
-            progressRepository.Update(userWordProgress);
-        }
+        // Always Update, never Add: ConcurrentSingleton.GetOrCreateAsync above
+        // already persisted the row (whether it found one or had to create
+        // it), so it's guaranteed to already exist in the database by now.
+        progressRepository.Update(userWordProgress);
 
         var xpEarned = dto.Rating switch
         {

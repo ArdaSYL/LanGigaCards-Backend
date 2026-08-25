@@ -79,33 +79,30 @@ internal static class LanguageProgressEngine
         }
 
         var repository = unitOfWork.Repository<UserLanguageProfile>();
-        var existing = (await repository.FindAsync(p => p.UserId == userId && p.LanguageCode == code))
-            .FirstOrDefault();
-        if (existing is not null)
-        {
-            // Ad boş kalmış eski satırlar (geçiş sırasında dil adı
-            // bilinmiyordu) ilk fırsatta doldurulur.
-            if (string.IsNullOrWhiteSpace(existing.LanguageName) && !string.IsNullOrWhiteSpace(languageName))
+        var profile = await ConcurrentSingleton.GetOrCreateAsync(
+            unitOfWork,
+            find: async () => (await repository.FindAsync(p => p.UserId == userId && p.LanguageCode == code))
+                .FirstOrDefault(),
+            create: () => new UserLanguageProfile
             {
-                existing.LanguageName = languageName.Trim();
-                repository.Update(existing);
-            }
+                UserId = userId,
+                LanguageCode = code,
+                LanguageName = (languageName ?? string.Empty).Trim(),
+                ProficiencyLevel = string.IsNullOrWhiteSpace(proficiencyLevel) ? "Beginner" : proficiencyLevel.Trim(),
+                DifficultyMode = DifficultyModeFor(proficiencyLevel),
+                IsSetupCompleted = false
+            });
 
-            return existing;
+        // Ad boş kalmış eski satırlar (geçiş sırasında dil adı bilinmiyordu)
+        // ilk fırsatta doldurulur. Yeni oluşturulan satırda zaten dolu, bu
+        // dal yalnızca önceden var olan satırlar için anlamlı.
+        if (string.IsNullOrWhiteSpace(profile.LanguageName) && !string.IsNullOrWhiteSpace(languageName))
+        {
+            profile.LanguageName = languageName.Trim();
+            repository.Update(profile);
         }
 
-        var created = new UserLanguageProfile
-        {
-            UserId = userId,
-            LanguageCode = code,
-            LanguageName = (languageName ?? string.Empty).Trim(),
-            ProficiencyLevel = string.IsNullOrWhiteSpace(proficiencyLevel) ? "Beginner" : proficiencyLevel.Trim(),
-            DifficultyMode = DifficultyModeFor(proficiencyLevel),
-            IsSetupCompleted = false
-        };
-
-        await repository.AddAsync(created);
-        return created;
+        return profile;
     }
 
     /// <summary>
