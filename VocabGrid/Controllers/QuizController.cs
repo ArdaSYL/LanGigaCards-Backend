@@ -179,7 +179,7 @@ public class QuizController : ControllerBase
         }
 
         await DailySummaryEngine.RecordManyAsync(_unitOfWork, activities);
-        await LanguageProgressEngine.RecordManyAsync(_unitOfWork, activities, user.TargetLanguage);
+        await LanguageProgressEngine.RecordManyAsync(_unitOfWork, activities, user.NativeLanguageCode, user.TargetLanguage);
 
         var xpEarned = activities.Sum(activity => activity.XpEarned);
         StudyEngine.ApplyXp(user, xpEarned);
@@ -507,7 +507,7 @@ public class QuizController : ControllerBase
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
-        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.NativeLanguageCode, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, pointsEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, submittedAt);

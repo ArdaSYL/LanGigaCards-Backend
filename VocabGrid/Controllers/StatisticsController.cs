@@ -55,10 +55,11 @@ public class StatisticsController : ControllerBase
         }
 
         var code = LanguageProgressEngine.Normalize(languageCode);
+        var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
         var languageProfile = code.Length == 0
             ? null
             : (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code)).FirstOrDefault();
+                .FindAsync(p => p.UserId == user.Id && p.NativeLanguageCode == nativeCode && p.LanguageCode == code)).FirstOrDefault();
 
         var activities = await GetActivitiesAsync(user.Id, period.Value.Start, period.Value.EndExclusive, code);
         var quizAnswers = activities

@@ -58,22 +58,26 @@ internal static class LanguageProgressEngine
     }
 
     /// <summary>
-    /// Kullanıcının o dildeki profilini getirir, yoksa oluşturur.
+    /// Kullanıcının o ana dil + hedef dil çiftindeki profilini getirir,
+    /// yoksa oluşturur.
     ///
     /// Yeni satır <see cref="UserLanguageProfile.IsSetupCompleted"/> false
-    /// ile açılır: dil ilk kez seçilmiştir ve istemcinin seviye ölçümü ile
-    /// kategori seçimini sorması gerekir. Var olan satır asla sıfırlanmaz —
-    /// öğrenen eski bir dile geri döndüğünde serisi ve XP'si yerindedir.
+    /// ile açılır: bu dil çifti ilk kez seçilmiştir ve istemcinin seviye
+    /// ölçümü ile kategori seçimini sorması gerekir. Var olan satır asla
+    /// sıfırlanmaz — öğrenen eski bir dile geri döndüğünde serisi ve XP'si
+    /// yerindedir.
     /// </summary>
     internal static async Task<UserLanguageProfile?> GetOrCreateAsync(
         IUnitOfWork unitOfWork,
         int userId,
+        string? nativeLanguageCode,
         string? languageCode,
         string? languageName = null,
         string? proficiencyLevel = null)
     {
         var code = Normalize(languageCode);
-        if (code.Length == 0)
+        var nativeCode = Normalize(nativeLanguageCode);
+        if (code.Length == 0 || nativeCode.Length == 0)
         {
             return null;
         }
@@ -81,11 +85,13 @@ internal static class LanguageProgressEngine
         var repository = unitOfWork.Repository<UserLanguageProfile>();
         var profile = await ConcurrentSingleton.GetOrCreateAsync(
             unitOfWork,
-            find: async () => (await repository.FindAsync(p => p.UserId == userId && p.LanguageCode == code))
+            find: async () => (await repository.FindAsync(p =>
+                    p.UserId == userId && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
                 .FirstOrDefault(),
             create: () => new UserLanguageProfile
             {
                 UserId = userId,
+                NativeLanguageCode = nativeCode,
                 LanguageCode = code,
                 LanguageName = (languageName ?? string.Empty).Trim(),
                 ProficiencyLevel = string.IsNullOrWhiteSpace(proficiencyLevel) ? "Beginner" : proficiencyLevel.Trim(),
@@ -130,8 +136,12 @@ internal static class LanguageProgressEngine
     /// şey yapılmaz — hangi dile yazılacağı bilinmeyen bir aktiviteyi rastgele
     /// bir profile eklemektense o dilin özetini eksik bırakmak yeğdir.
     /// </summary>
-    internal static Task RecordAsync(IUnitOfWork unitOfWork, StudyActivity activity, string? languageName = null) =>
-        RecordManyAsync(unitOfWork, new[] { activity }, languageName);
+    internal static Task RecordAsync(
+        IUnitOfWork unitOfWork,
+        StudyActivity activity,
+        string? nativeLanguageCode,
+        string? languageName = null) =>
+        RecordManyAsync(unitOfWork, new[] { activity }, nativeLanguageCode, languageName);
 
     /// <summary>
     /// Aynı isteğe ait birden çok aktiviteyi tek geçişte işler.
@@ -142,10 +152,16 @@ internal static class LanguageProgressEngine
     /// benzersizlik kısıtına çarpar. Ayrıca seri hesabı her seferinde tüm
     /// aktivite geçmişini okuyor; beş soruluk bir quiz için beş kez yapılması
     /// gereksiz.
+    ///
+    /// [nativeLanguageCode] arayanın o anki ana dilidir -- StudyActivity'nin
+    /// kendisi ana dil taşımaz, yalnızca hedef dili taşır (bkz.
+    /// <see cref="StudyActivity.LanguageCode"/>), o yüzden profilin dil
+    /// çiftini tamamlamak için ayrıca geçirilmesi gerekir.
     /// </summary>
     internal static async Task RecordManyAsync(
         IUnitOfWork unitOfWork,
         IReadOnlyList<StudyActivity> activities,
+        string? nativeLanguageCode,
         string? languageName = null)
     {
         foreach (var group in activities.GroupBy(a => Normalize(a.LanguageCode)))
@@ -155,7 +171,7 @@ internal static class LanguageProgressEngine
                 continue;
             }
 
-            await RecordGroupAsync(unitOfWork, group.Key, group.ToList(), languageName);
+            await RecordGroupAsync(unitOfWork, group.Key, group.ToList(), nativeLanguageCode, languageName);
         }
     }
 
@@ -163,12 +179,13 @@ internal static class LanguageProgressEngine
         IUnitOfWork unitOfWork,
         string code,
         IReadOnlyList<StudyActivity> activities,
+        string? nativeLanguageCode,
         string? languageName)
     {
         var userId = activities[0].UserId;
         var latest = activities.OrderBy(a => a.OccurredAt).Last();
 
-        var profile = await GetOrCreateAsync(unitOfWork, userId, code, languageName);
+        var profile = await GetOrCreateAsync(unitOfWork, userId, nativeLanguageCode, code, languageName);
         if (profile is null)
         {
             return;

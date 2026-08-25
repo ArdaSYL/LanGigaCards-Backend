@@ -118,7 +118,7 @@ public class ProgressController : ControllerBase
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
-        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.NativeLanguageCode, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, activity.XpEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, occurredAt);
@@ -175,11 +175,18 @@ public class ProgressController : ControllerBase
             return NotFound("Deck not found.");
         }
 
+        var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
         var code = LanguageProgressEngine.Normalize(languageCode);
+        var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
         var languageProfile = code.Length == 0
             ? null
             : (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == userId.Value && p.LanguageCode == code)).FirstOrDefault();
+                .FindAsync(p => p.UserId == userId.Value && p.NativeLanguageCode == nativeCode && p.LanguageCode == code)).FirstOrDefault();
 
         // Kaldığı yer: o dilde en son çalışılan kelime ve destesi.
         //
@@ -317,7 +324,7 @@ public class ProgressController : ControllerBase
 
         var wordLanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user);
         var languageProfile = await LanguageProgressEngine.GetOrCreateAsync(
-            _unitOfWork, user.Id, wordLanguageCode, user.TargetLanguage);
+            _unitOfWork, user.Id, user.NativeLanguageCode, wordLanguageCode, user.TargetLanguage);
 
         var schedule = FsrsEngine.ReviewCard(
             userWordProgress.Stability,
@@ -365,7 +372,7 @@ public class ProgressController : ControllerBase
         };
         await _unitOfWork.Repository<StudyActivity>().AddAsync(activity);
         await DailySummaryEngine.RecordAsync(_unitOfWork, activity);
-        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.TargetLanguage);
+        await LanguageProgressEngine.RecordAsync(_unitOfWork, activity, user.NativeLanguageCode, user.TargetLanguage);
 
         StudyEngine.ApplyXp(user, xpEarned);
         await StudyEngine.UpdateStreakAsync(_unitOfWork, user, reviewedAt);
@@ -410,10 +417,11 @@ public class ProgressController : ControllerBase
                     (code == "" || activity.LanguageCode == code)))
             .Select(activity => activity.OccurredAt);
 
+        var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
         var recordedLongest = code.Length == 0
             ? user.LongestStreak
             : (await _unitOfWork.Repository<UserLanguageProfile>()
-                    .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
+                    .FindAsync(p => p.UserId == user.Id && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
                 .FirstOrDefault()?.LongestStreak ?? 0;
 
         return Ok(new

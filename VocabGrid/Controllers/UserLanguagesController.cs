@@ -75,9 +75,16 @@ public class UserLanguagesController : ControllerBase
             return Unauthorized();
         }
 
+        var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
         var code = LanguageProgressEngine.Normalize(languageCode);
+        var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
         var profile = (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == userId.Value && p.LanguageCode == code))
+                .FindAsync(p => p.UserId == userId.Value && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
             .FirstOrDefault();
         if (profile is null)
         {
@@ -140,7 +147,8 @@ public class UserLanguagesController : ControllerBase
 
         var name = await ResolveLanguageNameAsync(code, dto.LanguageName);
 
-        var profile = await LanguageProgressEngine.GetOrCreateAsync(_unitOfWork, userId.Value, code, name);
+        var profile = await LanguageProgressEngine.GetOrCreateAsync(
+            _unitOfWork, userId.Value, user.NativeLanguageCode, code, name);
         if (profile is null)
         {
             return BadRequest("LanguageCode is required.");
@@ -218,6 +226,7 @@ public class UserLanguagesController : ControllerBase
         var profile = await LanguageProgressEngine.GetOrCreateAsync(
             _unitOfWork,
             userId.Value,
+            user.NativeLanguageCode,
             code,
             await ResolveLanguageNameAsync(code, null));
         if (profile is null)

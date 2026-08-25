@@ -130,7 +130,7 @@ internal static class CategoryDeckSynchronizer
         // açılmadı) eski davranışa —hesap geneli ayar + profil yeterliliği—
         // düşülür.
         var languageProfile = (await unitOfWork.Repository<UserLanguageProfile>()
-            .FindAsync(p => p.UserId == userId && p.LanguageCode == targetCode)).FirstOrDefault();
+            .FindAsync(p => p.UserId == userId && p.NativeLanguageCode == nativeCode && p.LanguageCode == targetCode)).FirstOrDefault();
         var settings = (await unitOfWork.Repository<UserSettings>()
             .FindAsync(s => s.UserId == userId)).FirstOrDefault();
         var levelCeiling = languageProfile is null
