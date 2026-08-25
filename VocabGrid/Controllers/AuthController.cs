@@ -5,6 +5,7 @@ using System.Text;
 using Google.Apis.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Microsoft.IdentityModel.Tokens;
@@ -116,6 +117,24 @@ public class AuthController : ControllerBase
 
         if (user == null || !VerifyPasswordHash(request.Password, user.PasswordHash, user.PasswordSalt))
         {
+            // Normal (non-deleted) lookup found nothing usable -- check
+            // separately whether this is a deactivated account with matching
+            // credentials, so a real owner gets pointed at /reactivate instead
+            // of the same "wrong password" message a stranger would see. Only
+            // checked after the password already failed to match an active
+            // account, and only reveals deactivation once the password itself
+            // is verified, so a bare email guess still can't tell an active
+            // account from a deactivated one.
+            var deactivatedUser = await FindDeactivatedUserAsync(request.Email, request.Password);
+            if (deactivatedUser is not null)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = "This account is deactivated. Reactivate it to sign back in.",
+                    isDeactivated = true
+                });
+            }
+
             return Unauthorized("Invalid credentials.");
         }
 
@@ -124,6 +143,57 @@ public class AuthController : ControllerBase
         await _unitOfWork.CompleteAsync();
 
         return Ok(BuildAuthResponse("Login successful.", user));
+    }
+
+    /// <summary>
+    /// Brings a soft-deleted account back: <see cref="UserController.DeleteAccount"/>
+    /// only ever sets <see cref="User.IsDeleted"/>, it never removes the row,
+    /// so nothing here needs to reconstruct data -- flipping the flag is
+    /// enough to restore full access to everything that was there before.
+    /// </summary>
+    [HttpPost("reactivate")]
+    [EnableRateLimiting(RateLimitPolicies.Credentials)]
+    public async Task<IActionResult> Reactivate([FromBody] UserLoginDto request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password))
+        {
+            return BadRequest("Email and Password are required.");
+        }
+
+        var user = await FindDeactivatedUserAsync(request.Email, request.Password);
+        if (user is null)
+        {
+            return Unauthorized("Invalid credentials.");
+        }
+
+        user.IsDeleted = false;
+        user.DeletedAt = null;
+
+        var userRepository = _unitOfWork.Repository<User>();
+        await IssueRefreshTokenAsync(user);
+        userRepository.Update(user);
+        await _unitOfWork.CompleteAsync();
+
+        return Ok(BuildAuthResponse("Account reactivated.", user));
+    }
+
+    /// <summary>
+    /// The global query filter on <see cref="User"/> excludes deactivated
+    /// rows from every normal lookup (see AppDbContext), so this bypasses it
+    /// deliberately -- callers only use this after a normal lookup already
+    /// failed, to tell "deactivated, right password" apart from "wrong
+    /// password" or "no such account".
+    /// </summary>
+    private async Task<User?> FindDeactivatedUserAsync(string email, string password)
+    {
+        var normalizedEmail = email.Trim().ToLowerInvariant();
+        var candidate = await _unitOfWork.Repository<User>().Query()
+            .IgnoreQueryFilters()
+            .FirstOrDefaultAsync(u => u.IsDeleted && u.Email.ToLower() == normalizedEmail);
+
+        return candidate is not null && VerifyPasswordHash(password, candidate.PasswordHash, candidate.PasswordSalt)
+            ? candidate
+            : null;
     }
 
     [HttpPost("refresh")]
