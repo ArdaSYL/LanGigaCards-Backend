@@ -44,25 +44,27 @@ public class DeckController : ControllerBase
             return Unauthorized();
         }
 
-        var requestedCode = LanguageProgressEngine.Normalize(languageCode);
         var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- see LanguageProgressEngine.ResolveOrDefaultAsync's doc
+        // comment for why this app's own client relies on that default.
+        var requestedCodeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var requestedCode = requestedCodeRaw.Length > 0
+            ? requestedCodeRaw
+            : LanguageProgressEngine.Normalize(user?.TargetLanguageCode);
         var allDecks = (await _unitOfWork.Repository<Deck>()
                 .FindAsync(deck => deck.UserId == userId.Value))
             .OrderByDescending(deck => deck.UpdatedAt ?? deck.CreatedAt)
             .ToList();
 
-        var decks = allDecks;
-        if (requestedCode.Length > 0)
-        {
-            var isCurrentTarget = LanguageProgressEngine.Normalize(user?.TargetLanguageCode) == requestedCode;
-            decks = allDecks
-                .Where(deck =>
-                {
-                    var deckCode = LanguageProgressEngine.Normalize(deck.LanguageCode);
-                    return deckCode.Length == 0 ? isCurrentTarget : deckCode == requestedCode;
-                })
-                .ToList();
-        }
+        var isCurrentTarget = LanguageProgressEngine.Normalize(user?.TargetLanguageCode) == requestedCode;
+        var decks = allDecks
+            .Where(deck =>
+            {
+                var deckCode = LanguageProgressEngine.Normalize(deck.LanguageCode);
+                return deckCode.Length == 0 ? isCurrentTarget : deckCode == requestedCode;
+            })
+            .ToList();
 
         var nativeTitles = await NativeTitlesAsync(user);
 

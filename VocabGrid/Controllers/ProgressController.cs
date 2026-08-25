@@ -181,12 +181,16 @@ public class ProgressController : ControllerBase
             return Unauthorized();
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise the review queue below mixes cards from
+        // every language ever studied into one list. See
+        // LanguageProgressEngine.ResolveOrDefaultAsync's doc comment.
+        var codeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
         var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
-        var languageProfile = code.Length == 0
-            ? null
-            : (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == userId.Value && p.NativeLanguageCode == nativeCode && p.LanguageCode == code)).FirstOrDefault();
+        var languageProfile = (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == userId.Value && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
+            .FirstOrDefault();
 
         // Kaldığı yer: o dilde en son çalışılan kelime ve destesi.
         //
@@ -211,7 +215,14 @@ public class ProgressController : ControllerBase
         // Deste-siz bir kart yalnızca paylaşılan müfredata aitse
         // çalışılabilir; sahipsiz deste-siz kayıtlar tekrar kuyruğuna
         // girmez. Bu kural aşağıdaki LessonVocabularies alt sorgusunda.
-        var includeCurriculum = deckId is null;
+        //
+        // Müfredat tek bir dile ait -- CurriculumSeedData'nın kendi
+        // belgesinde yazdığı gibi paylaşılan İngilizce içerik (Term alanı
+        // İngilizce kelime, Translation Türkçe karşılığı). Kendi dil kodu
+        // taşımadığı için yalnızca hedef dil İngilizce olduğunda kuyruğa
+        // girmeli; yoksa her dilde çalışan herkesin kuyruğuna İngilizce
+        // kelimeler karışırdı (ör. Almanca öğrenirken "Hello" görmek gibi).
+        var includeCurriculum = deckId is null && code == "en";
         var now = DateTime.UtcNow;
 
         var lessonLinks = _unitOfWork.Repository<LessonVocabulary>().Query();
@@ -222,12 +233,17 @@ public class ProgressController : ControllerBase
         // kartlarının kendi dil kodu yok; onlar zaten kullanıcının hedef diline
         // göre üretiliyor ve dil verildiğinde kuyruğa yalnızca o dil hedefse
         // giriyorlar (aşağıdaki includeCurriculum koşulu değişmedi, üstüne dil
-        // eşleşmesi eklendi).
+        // eşleşmesi eklendi). LanguageCode alanı eklenmeden önce kurulmuş
+        // destelerin kodu null olabilir -- code artık her zaman dolu
+        // olduğundan (yukarıda varsayılan atandı), böyle bir deste yalnızca
+        // isteğin çözüldüğü dil kullanıcının o anki hedef diliyle aynıysa
+        // kuyruğa girer; GetMyDecks'teki aynı kural burada da geçerli.
+        var isCurrentTarget = code == LanguageProgressEngine.Normalize(user.TargetLanguageCode);
         var pool = _unitOfWork.Repository<Vocabulary>().Query()
             .Where(word => deckId != null
                 ? word.DeckId == deckId
                 : (word.DeckId != null && word.Deck!.UserId == userId.Value
-                      && (code == "" || word.Deck!.LanguageCode == code))
+                      && (word.Deck!.LanguageCode == null ? isCurrentTarget : word.Deck!.LanguageCode == code))
                   || (includeCurriculum && word.DeckId == null
                       && lessonLinks.Any(link => link.WordID == word.WordID)));
 
@@ -411,18 +427,20 @@ public class ProgressController : ControllerBase
             return Unauthorized();
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise this mixes study days from every language
+        // into one streak. See LanguageProgressEngine.ResolveOrDefaultAsync's
+        // doc comment.
+        var codeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
         var activityDates = (await _unitOfWork.Repository<StudyActivity>()
-                .FindAsync(activity => activity.UserId == user.Id &&
-                    (code == "" || activity.LanguageCode == code)))
+                .FindAsync(activity => activity.UserId == user.Id && activity.LanguageCode == code))
             .Select(activity => activity.OccurredAt);
 
         var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
-        var recordedLongest = code.Length == 0
-            ? user.LongestStreak
-            : (await _unitOfWork.Repository<UserLanguageProfile>()
-                    .FindAsync(p => p.UserId == user.Id && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
-                .FirstOrDefault()?.LongestStreak ?? 0;
+        var recordedLongest = (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == user.Id && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
+            .FirstOrDefault()?.LongestStreak ?? 0;
 
         return Ok(new
         {
@@ -464,16 +482,20 @@ public class ProgressController : ControllerBase
             return BadRequest(new { Message = "'from' tarihi 'to' tarihinden sonra olamaz." });
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise the heatmap mixes every language's activity
+        // into one count per day. See
+        // LanguageProgressEngine.ResolveOrDefaultAsync's doc comment.
+        var code = await LanguageProgressEngine.ResolveOrDefaultAsync(_unitOfWork, userId.Value, languageCode);
         var summaries = await _unitOfWork.Repository<DailyStudySummary>()
             .FindAsync(summary =>
                 summary.UserId == userId.Value &&
-                (code == "" || summary.LanguageCode == code) &&
+                summary.LanguageCode == code &&
                 summary.Day >= start &&
                 summary.Day <= end);
 
-        // Dil süzgeci yokken aynı günün birden çok dile ait satırı olabilir;
-        // ekranın istediği tek bir gün olduğu için birleştiriliyorlar.
+        // Aynı gün için tek dilde tek satır olur; GroupBy burada yalnızca
+        // DailyStudySummary'e dönüştürmek için kullanılıyor.
         var days = summaries
             .GroupBy(summary => summary.Day)
             .Select(group => new DailyStudySummary

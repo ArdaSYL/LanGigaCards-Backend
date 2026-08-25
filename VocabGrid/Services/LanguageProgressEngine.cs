@@ -58,6 +58,36 @@ internal static class LanguageProgressEngine
     }
 
     /// <summary>
+    /// Normalizes [languageCode], falling back to the caller's own current
+    /// target language when it's not given.
+    ///
+    /// Several list/summary endpoints (due reviews, streak, daily summary,
+    /// statistics overview/heatmap, deck list) take an optional languageCode
+    /// query parameter, but historically treated "not given" as "no filter
+    /// at all" rather than "my current language" -- every one of these
+    /// endpoints then silently mixed every language the user had ever
+    /// studied into one list/count, because the app's own client never
+    /// actually sends this parameter. Each language a learner studies is
+    /// meant to be its own isolated space (own decks, own review queue, own
+    /// streak, own stats); "not specified" has to mean "whichever language
+    /// I'm currently in", not "all of them at once". Call this instead of
+    /// bare <see cref="Normalize"/> wherever an omitted languageCode should
+    /// resolve to the current session's language rather than disable
+    /// filtering.
+    /// </summary>
+    internal static async Task<string> ResolveOrDefaultAsync(IUnitOfWork unitOfWork, int userId, string? languageCode)
+    {
+        var code = Normalize(languageCode);
+        if (code.Length > 0)
+        {
+            return code;
+        }
+
+        var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
+        return Normalize(user?.TargetLanguageCode);
+    }
+
+    /// <summary>
     /// Kullanıcının o ana dil + hedef dil çiftindeki profilini getirir,
     /// yoksa oluşturur.
     ///
