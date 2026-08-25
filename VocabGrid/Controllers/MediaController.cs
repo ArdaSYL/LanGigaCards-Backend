@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using VocabGrid.Services;
 
 namespace VocabGrid.Controllers;
 
@@ -50,7 +51,44 @@ public class MediaController : ControllerBase
         var uploadsDir = Path.Combine(webRoot, "uploads");
         Directory.CreateDirectory(uploadsDir);
 
-        var fileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+        var normalizedExtension = extension.ToLowerInvariant();
+        long storedSizeBytes;
+        string storedContentType;
+
+        if (ImageOptimizer.CanOptimize(normalizedExtension))
+        {
+            // Optimization always outputs WebP -- see ImageOptimizer's doc
+            // comment for why -- so the stored file's extension can differ
+            // from what was uploaded even though the original upload was
+            // already a supported image type.
+            normalizedExtension = ".webp";
+            storedContentType = "image/webp";
+
+            await using var upload = file.OpenReadStream();
+            using var optimized = await ImageOptimizer.OptimizeAsync(upload);
+            storedSizeBytes = optimized.Length;
+
+            var optimizedFileName = $"{Guid.NewGuid():N}{normalizedExtension}";
+            var optimizedPath = Path.Combine(uploadsDir, optimizedFileName);
+            await using (var destination = System.IO.File.Create(optimizedPath))
+            {
+                await optimized.CopyToAsync(destination);
+            }
+
+            return Ok(new
+            {
+                Url = $"/uploads/{optimizedFileName}",
+                FileName = optimizedFileName,
+                ContentType = storedContentType,
+                SizeBytes = storedSizeBytes,
+                OriginalSizeBytes = file.Length
+            });
+        }
+
+        // Animated GIFs and audio files: stored as uploaded, unoptimized --
+        // see ImageOptimizer's doc comment for why GIFs specifically are
+        // excluded (re-encoding would destroy the animation).
+        var fileName = $"{Guid.NewGuid():N}{normalizedExtension}";
         var physicalPath = Path.Combine(uploadsDir, fileName);
 
         await using (var stream = System.IO.File.Create(physicalPath))
@@ -58,10 +96,9 @@ public class MediaController : ControllerBase
             await file.CopyToAsync(stream);
         }
 
-        var relativeUrl = $"/uploads/{fileName}";
         return Ok(new
         {
-            Url = relativeUrl,
+            Url = $"/uploads/{fileName}",
             FileName = fileName,
             ContentType = file.ContentType,
             SizeBytes = file.Length
