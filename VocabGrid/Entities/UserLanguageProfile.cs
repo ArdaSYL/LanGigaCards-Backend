@@ -3,8 +3,7 @@ using System.ComponentModel.DataAnnotations;
 namespace VocabGrid.Entities;
 
 /// <summary>
-/// Bir kullanıcının <em>tek bir ana dil + hedef dil çiftindeki</em> öğrenme
-/// durumu.
+/// Bir kullanıcının <em>tek bir hedef dildeki</em> öğrenme durumu.
 ///
 /// Bugüne kadar seviye, seri, XP ve seviye numarası doğrudan
 /// <see cref="User"/> satırında duruyordu. Tek dil öğrenildiği sürece bu
@@ -16,16 +15,15 @@ namespace VocabGrid.Entities;
 /// Bu tablo o durumu dil başına tek satıra ayırır. <see cref="User"/>
 /// üzerindeki alanlar silinmedi: hesabın tamamına ait toplamlar (tüm
 /// dillerdeki XP, en uzun seri) orada kalır ve rozet değerlendirmesi
-/// oradan okur. Buradaki sayılar tek bir dil çiftine aittir.
+/// oradan okur. Buradaki sayılar tek bir dile aittir.
 ///
-/// Anahtar yalnızca hedef dil değil, <see cref="NativeLanguageCode"/> +
-/// <see cref="LanguageCode"/> çiftidir: İngilizce konuşan birinin
-/// Almanca öğrenimi ile (kullanıcı ana dilini sonradan Türkçe olarak
-/// değiştirirse) Türkçe konuşan birinin Almanca öğrenimi aynı satırı
-/// paylaşmamalı — seviye, kelime seçimi ve örnek içerik ana dile göre
-/// değişir, ikisi aynı ilerlemeyi temsil etmez.
+/// Anahtar yalnızca hedef dildir (<see cref="LanguageCode"/>). Ana dil artık
+/// öğrenme bağlamının bir parçası değil, hesabın tek bir uygulama dili
+/// tercihi -- Duolingo'daki "uygulama dili" gibi, tüm hedef diller arasında
+/// paylaşılır ve hiçbirinin profiliyle eşleşmez. Bu yüzden anahtar burada
+/// tekrar sadece hedef dile indirgendi.
 ///
-/// Satır, o dil çifti ilk kez hedef seçildiğinde oluşur ve
+/// Satır, o dil ilk kez hedef seçildiğinde oluşur ve
 /// <see cref="IsSetupCompleted"/> false başlar — istemci bunu görünce
 /// seviye ölçümü ve kategori seçimi penceresini açar.
 /// </summary>
@@ -35,15 +33,6 @@ public class UserLanguageProfile
 
     public int UserId { get; set; }
     public User User { get; set; } = null!;
-
-    /// <summary>
-    /// Bu profilin kaydedildiği andaki ana dilin ISO kodu — <c>en</c>,
-    /// <c>tr</c>. Anahtarın parçası: kullanıcı ana dilini sonradan
-    /// değiştirirse eski profil olduğu gibi kalır, yeni ana dil için ayrı
-    /// bir satır açılır.
-    /// </summary>
-    [MaxLength(8)]
-    public string NativeLanguageCode { get; set; } = string.Empty;
 
     /// <summary>Hedef dilin ISO kodu — <c>de</c>, <c>ja</c>.</summary>
     [MaxLength(8)]

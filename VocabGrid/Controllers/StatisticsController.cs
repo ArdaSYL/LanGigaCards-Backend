@@ -57,9 +57,8 @@ public class StatisticsController : ControllerBase
 
         var codeRaw = LanguageProgressEngine.Normalize(languageCode);
         var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
-        var nativeCode = LanguageProgressEngine.Normalize(user.NativeLanguageCode);
         var languageProfile = (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == user.Id && p.NativeLanguageCode == nativeCode && p.LanguageCode == code))
+                .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
             .FirstOrDefault();
 
         var activities = await GetActivitiesAsync(user.Id, period.Value.Start, period.Value.EndExclusive, code);

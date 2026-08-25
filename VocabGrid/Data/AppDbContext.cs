@@ -155,12 +155,11 @@ namespace VocabGrid.Data
                 .HasForeignKey(p => p.LastStudiedWordId)
                 .OnDelete(DeleteBehavior.NoAction);
 
-            // Bir kullanıcının bir ana dil + hedef dil çiftinde tek profili
-            // olur; ikinci satır istatistiği ikiye bölerdi. Ana dil de
-            // anahtarın parçası -- bkz. UserLanguageProfile'ın kendi
-            // belgesindeki gerekçe.
+            // Bir kullanıcının bir hedef dilde tek profili olur; ikinci satır
+            // istatistiği ikiye bölerdi. Ana dil artık anahtarın parçası
+            // değil -- bkz. UserLanguageProfile'ın kendi belgesindeki gerekçe.
             modelBuilder.Entity<UserLanguageProfile>()
-                .HasIndex(p => new { p.UserId, p.NativeLanguageCode, p.LanguageCode })
+                .HasIndex(p => new { p.UserId, p.LanguageCode })
                 .IsUnique();
 
             // Dil, bileşik anahtarın parçası: aynı kategori iki farklı dilde

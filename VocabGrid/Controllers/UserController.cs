@@ -67,7 +67,6 @@ public class UserController : ControllerBase
         }
 
         var previousTargetCode = user.TargetLanguageCode;
-        var previousNativeCode = user.NativeLanguageCode;
 
         user.FirstName = dto.FirstName.Trim();
         user.LastName = dto.LastName.Trim();
@@ -91,19 +90,13 @@ public class UserController : ControllerBase
         userRepository.Update(user);
 
         // Hedef dilin profil satırı her koşulda var olmalı: istatistik, seri ve
-        // "en son çalışılan" bilgisi oraya yazılıyor. Yeni bir dil çiftine
-        // geçildiğinde satır burada açılır ve kurulumu tamamlanmamış olarak
-        // işaretlenir — istemci seviye ölçümü ve kategori penceresini bu
-        // bayrağa bakarak açar. Anahtar ana dil + hedef dil çifti olduğu
-        // için ikisinden biri değişse de yeni (ya da farklı bir eski) satıra
-        // düşülür.
-        var languageChanged =
-            !string.Equals(previousTargetCode, user.TargetLanguageCode, StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(previousNativeCode, user.NativeLanguageCode, StringComparison.OrdinalIgnoreCase);
+        // "en son çalışılan" bilgisi oraya yazılıyor. Yeni bir dile geçildiğinde
+        // satır burada açılır ve kurulumu tamamlanmamış olarak işaretlenir —
+        // istemci seviye ölçümü ve kategori penceresini bu bayrağa bakarak açar.
+        var languageChanged = !string.Equals(previousTargetCode, user.TargetLanguageCode, StringComparison.OrdinalIgnoreCase);
         var languageProfile = await LanguageProgressEngine.GetOrCreateAsync(
             _unitOfWork,
             userId.Value,
-            user.NativeLanguageCode,
             user.TargetLanguageCode,
             user.TargetLanguage,
             user.TargetProficiencyLevel);
