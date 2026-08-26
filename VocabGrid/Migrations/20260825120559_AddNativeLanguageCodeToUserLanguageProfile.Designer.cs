@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using VocabGrid.Data;
 
@@ -11,9 +12,11 @@ using VocabGrid.Data;
 namespace VocabGrid.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260825120559_AddNativeLanguageCodeToUserLanguageProfile")]
+    partial class AddNativeLanguageCodeToUserLanguageProfile
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -40525,6 +40528,11 @@ namespace VocabGrid.Migrations
                     b.Property<int>("LongestStreak")
                         .HasColumnType("int");
 
+                    b.Property<string>("NativeLanguageCode")
+                        .IsRequired()
+                        .HasMaxLength(8)
+                        .HasColumnType("nvarchar(8)");
+
                     b.Property<string>("ProficiencyLevel")
                         .IsRequired()
                         .HasMaxLength(20)
@@ -40542,7 +40550,7 @@ namespace VocabGrid.Migrations
 
                     b.HasIndex("LastStudiedWordId");
 
-                    b.HasIndex("UserId", "LanguageCode")
+                    b.HasIndex("UserId", "NativeLanguageCode", "LanguageCode")
                         .IsUnique();
 
                     b.ToTable("UserLanguageProfiles", t =>

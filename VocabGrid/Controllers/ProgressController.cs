@@ -175,11 +175,21 @@ public class ProgressController : ControllerBase
             return NotFound("Deck not found.");
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
-        var languageProfile = code.Length == 0
-            ? null
-            : (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == userId.Value && p.LanguageCode == code)).FirstOrDefault();
+        var user = await _unitOfWork.Repository<User>().GetByIdAsync(userId.Value);
+        if (user is null)
+        {
+            return Unauthorized();
+        }
+
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise the review queue below mixes cards from
+        // every language ever studied into one list. See
+        // LanguageProgressEngine.ResolveOrDefaultAsync's doc comment.
+        var codeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
+        var languageProfile = (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == userId.Value && p.LanguageCode == code))
+            .FirstOrDefault();
 
         // Kaldığı yer: o dilde en son çalışılan kelime ve destesi.
         //
@@ -204,7 +214,14 @@ public class ProgressController : ControllerBase
         // Deste-siz bir kart yalnızca paylaşılan müfredata aitse
         // çalışılabilir; sahipsiz deste-siz kayıtlar tekrar kuyruğuna
         // girmez. Bu kural aşağıdaki LessonVocabularies alt sorgusunda.
-        var includeCurriculum = deckId is null;
+        //
+        // Müfredat tek bir dile ait -- CurriculumSeedData'nın kendi
+        // belgesinde yazdığı gibi paylaşılan İngilizce içerik (Term alanı
+        // İngilizce kelime, Translation Türkçe karşılığı). Kendi dil kodu
+        // taşımadığı için yalnızca hedef dil İngilizce olduğunda kuyruğa
+        // girmeli; yoksa her dilde çalışan herkesin kuyruğuna İngilizce
+        // kelimeler karışırdı (ör. Almanca öğrenirken "Hello" görmek gibi).
+        var includeCurriculum = deckId is null && code == "en";
         var now = DateTime.UtcNow;
 
         var lessonLinks = _unitOfWork.Repository<LessonVocabulary>().Query();
@@ -215,12 +232,17 @@ public class ProgressController : ControllerBase
         // kartlarının kendi dil kodu yok; onlar zaten kullanıcının hedef diline
         // göre üretiliyor ve dil verildiğinde kuyruğa yalnızca o dil hedefse
         // giriyorlar (aşağıdaki includeCurriculum koşulu değişmedi, üstüne dil
-        // eşleşmesi eklendi).
+        // eşleşmesi eklendi). LanguageCode alanı eklenmeden önce kurulmuş
+        // destelerin kodu null olabilir -- code artık her zaman dolu
+        // olduğundan (yukarıda varsayılan atandı), böyle bir deste yalnızca
+        // isteğin çözüldüğü dil kullanıcının o anki hedef diliyle aynıysa
+        // kuyruğa girer; GetMyDecks'teki aynı kural burada da geçerli.
+        var isCurrentTarget = code == LanguageProgressEngine.Normalize(user.TargetLanguageCode);
         var pool = _unitOfWork.Repository<Vocabulary>().Query()
             .Where(word => deckId != null
                 ? word.DeckId == deckId
                 : (word.DeckId != null && word.Deck!.UserId == userId.Value
-                      && (code == "" || word.Deck!.LanguageCode == code))
+                      && (word.Deck!.LanguageCode == null ? isCurrentTarget : word.Deck!.LanguageCode == code))
                   || (includeCurriculum && word.DeckId == null
                       && lessonLinks.Any(link => link.WordID == word.WordID)));
 
@@ -293,45 +315,54 @@ public class ProgressController : ControllerBase
         }
 
         var progressRepository = _unitOfWork.Repository<UserWordProgress>();
-        var progress = (await progressRepository.FindAsync(candidate =>
-                candidate.UserID == user.Id && candidate.WordID == word.WordID))
-            .FirstOrDefault();
         var reviewedAt = DateTime.UtcNow;
 
-        var isNewProgress = progress is null;
-        if (isNewProgress)
-        {
-            progress = new UserWordProgress
+        var userWordProgress = await ConcurrentSingleton.GetOrCreateAsync(
+            _unitOfWork,
+            find: async () => (await progressRepository.FindAsync(candidate =>
+                    candidate.UserID == user.Id && candidate.WordID == word.WordID))
+                .FirstOrDefault(),
+            create: () => new UserWordProgress
             {
                 UserID = user.Id,
                 WordID = word.WordID,
                 LastReviewedAt = reviewedAt
-            };
-        }
+            });
 
-        var userWordProgress = progress!;
+        // Must be read before LastReviewedAt is overwritten below -- FsrsEngine
+        // needs the *previous* review's timestamp to know how many days have
+        // elapsed since then, not this one. For a first-time review
+        // (Stability still at its zero default) FsrsEngine never looks at
+        // this value, so it not being meaningful yet for a freshly-created
+        // row doesn't matter.
+        var previousReviewedAt = userWordProgress.LastReviewedAt;
 
-        var schedule = StudyEngine.CalculateReviewSchedule(
-            userWordProgress.IntervalDays,
-            userWordProgress.EaseFactor,
+        var wordLanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user);
+        var languageProfile = await LanguageProgressEngine.GetOrCreateAsync(
+            _unitOfWork, user.Id, wordLanguageCode, user.TargetLanguage);
+
+        var schedule = FsrsEngine.ReviewCard(
+            userWordProgress.Stability,
+            userWordProgress.Difficulty,
+            previousReviewedAt,
             dto.Rating,
-            reviewedAt);
+            reviewedAt,
+            cefrLevel: languageProfile?.DifficultyMode);
 
-        userWordProgress.IntervalDays = schedule.IntervalDays;
-        userWordProgress.EaseFactor = schedule.EaseFactor;
+        userWordProgress.Stability = schedule.Stability;
+        userWordProgress.Difficulty = schedule.Difficulty;
+        // Refreshed for continuity/debugging only -- nothing computes from
+        // these anymore, see the doc comment on UserWordProgress.
+        userWordProgress.IntervalDays = Math.Max(1, (int)Math.Round((schedule.NextReviewDate - reviewedAt).TotalDays));
         userWordProgress.NextReviewDate = schedule.NextReviewDate;
         userWordProgress.LastReviewedAt = reviewedAt;
         userWordProgress.LastRating = dto.Rating;
         userWordProgress.ReviewCount++;
-        userWordProgress.MasteryLevel = Math.Clamp(userWordProgress.MasteryLevel + schedule.MasteryDelta, 0, 5);
-        if (isNewProgress)
-        {
-            await progressRepository.AddAsync(userWordProgress);
-        }
-        else
-        {
-            progressRepository.Update(userWordProgress);
-        }
+        userWordProgress.MasteryLevel = schedule.MasteryLevel;
+        // Always Update, never Add: ConcurrentSingleton.GetOrCreateAsync above
+        // already persisted the row (whether it found one or had to create
+        // it), so it's guaranteed to already exist in the database by now.
+        progressRepository.Update(userWordProgress);
 
         var xpEarned = dto.Rating switch
         {
@@ -349,7 +380,7 @@ public class ProgressController : ControllerBase
             ActivityType = "Review",
             // Kartın destesinden gelen dil; destesiz müfredat kartlarında
             // kullanıcının o anki hedef dili.
-            LanguageCode = await LanguageProgressEngine.ResolveLanguageAsync(_unitOfWork, word, user),
+            LanguageCode = wordLanguageCode,
             Result = dto.Rating,
             DurationSeconds = dto.DurationSeconds,
             XpEarned = xpEarned
@@ -395,17 +426,19 @@ public class ProgressController : ControllerBase
             return Unauthorized();
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise this mixes study days from every language
+        // into one streak. See LanguageProgressEngine.ResolveOrDefaultAsync's
+        // doc comment.
+        var codeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
         var activityDates = (await _unitOfWork.Repository<StudyActivity>()
-                .FindAsync(activity => activity.UserId == user.Id &&
-                    (code == "" || activity.LanguageCode == code)))
+                .FindAsync(activity => activity.UserId == user.Id && activity.LanguageCode == code))
             .Select(activity => activity.OccurredAt);
 
-        var recordedLongest = code.Length == 0
-            ? user.LongestStreak
-            : (await _unitOfWork.Repository<UserLanguageProfile>()
-                    .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
-                .FirstOrDefault()?.LongestStreak ?? 0;
+        var recordedLongest = (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
+            .FirstOrDefault()?.LongestStreak ?? 0;
 
         return Ok(new
         {
@@ -447,16 +480,20 @@ public class ProgressController : ControllerBase
             return BadRequest(new { Message = "'from' tarihi 'to' tarihinden sonra olamaz." });
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
+        // Not given -> the language the learner is currently in, never "all
+        // of them" -- otherwise the heatmap mixes every language's activity
+        // into one count per day. See
+        // LanguageProgressEngine.ResolveOrDefaultAsync's doc comment.
+        var code = await LanguageProgressEngine.ResolveOrDefaultAsync(_unitOfWork, userId.Value, languageCode);
         var summaries = await _unitOfWork.Repository<DailyStudySummary>()
             .FindAsync(summary =>
                 summary.UserId == userId.Value &&
-                (code == "" || summary.LanguageCode == code) &&
+                summary.LanguageCode == code &&
                 summary.Day >= start &&
                 summary.Day <= end);
 
-        // Dil süzgeci yokken aynı günün birden çok dile ait satırı olabilir;
-        // ekranın istediği tek bir gün olduğu için birleştiriliyorlar.
+        // Aynı gün için tek dilde tek satır olur; GroupBy burada yalnızca
+        // DailyStudySummary'e dönüştürmek için kullanılıyor.
         var days = summaries
             .GroupBy(summary => summary.Day)
             .Select(group => new DailyStudySummary

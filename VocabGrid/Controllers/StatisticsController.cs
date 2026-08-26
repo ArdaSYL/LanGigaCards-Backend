@@ -22,12 +22,13 @@ public class StatisticsController : ControllerBase
     }
 
     /// <summary>
-    /// Özet istatistikler. <paramref name="languageCode"/> verildiğinde
-    /// yalnızca o hedef dilin çalışmaları sayılır — seri, XP ve seviye de o
-    /// dilin kendi profilinden okunur.
+    /// Özet istatistikler. <paramref name="languageCode"/> verildiğinde o
+    /// hedef dilin çalışmaları sayılır — seri, XP ve seviye de o dilin kendi
+    /// profilinden okunur.
     ///
-    /// Parametre boş bırakılırsa hesabın tamamı toplanır; eski istemciler ve
-    /// dilden bağımsız görünümler bu biçimi kullanır.
+    /// Parametre boş bırakılırsa kullanıcının o anki hedef diline düşülür,
+    /// hesabın tamamına değil: her dil kendi izole öğrenme alanı, "dilsiz"
+    /// bir görünüm hepsini birbirine karıştırırdı.
     /// </summary>
     [HttpGet("overview")]
     [ProducesResponseType(typeof(StatisticsOverviewDto), StatusCodes.Status200OK)]
@@ -54,11 +55,11 @@ public class StatisticsController : ControllerBase
             return Unauthorized();
         }
 
-        var code = LanguageProgressEngine.Normalize(languageCode);
-        var languageProfile = code.Length == 0
-            ? null
-            : (await _unitOfWork.Repository<UserLanguageProfile>()
-                .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code)).FirstOrDefault();
+        var codeRaw = LanguageProgressEngine.Normalize(languageCode);
+        var code = codeRaw.Length > 0 ? codeRaw : LanguageProgressEngine.Normalize(user.TargetLanguageCode);
+        var languageProfile = (await _unitOfWork.Repository<UserLanguageProfile>()
+                .FindAsync(p => p.UserId == user.Id && p.LanguageCode == code))
+            .FirstOrDefault();
 
         var activities = await GetActivitiesAsync(user.Id, period.Value.Start, period.Value.EndExclusive, code);
         var quizAnswers = activities
@@ -70,19 +71,21 @@ public class StatisticsController : ControllerBase
                 .FindAsync(progress => progress.UserID == user.Id && progress.Completed))
             .Count();
         // Zamanı gelen tekrarlar da dile göre süzülüyor: kartın dili
-        // destesinden geliyor, destesiz müfredat kartları her dilde sayılır.
+        // destesinden geliyor. Müfredat İngilizce içerik olduğu için (bkz.
+        // CurriculumSeedData) destesiz kartlar yalnızca hedef dil İngilizce
+        // olduğunda sayılır -- GetDueReviews'teki aynı kural burada da
+        // geçerli.
         var now = DateTime.UtcNow;
         var dueReviews = await _unitOfWork.Repository<UserWordProgress>().Query()
             .Where(progress => progress.UserID == user.Id &&
                 (progress.NextReviewDate == null || progress.NextReviewDate <= now) &&
-                (code == "" || progress.Vocabulary.DeckId == null ||
+                ((progress.Vocabulary.DeckId == null && code == "en") ||
                  progress.Vocabulary.Deck!.LanguageCode == code))
             .CountAsync();
         // The selected period is for the overview metrics only. Streaks must use the
         // user's full activity history, otherwise a short date filter resets them.
         var activityHistory = await _unitOfWork.Repository<StudyActivity>()
-            .FindAsync(activity => activity.UserId == user.Id &&
-                (code == "" || activity.LanguageCode == code));
+            .FindAsync(activity => activity.UserId == user.Id && activity.LanguageCode == code);
         var activityDates = activityHistory.Select(activity => activity.OccurredAt);
 
         return Ok(new StatisticsOverviewDto
@@ -103,20 +106,22 @@ public class StatisticsController : ControllerBase
             CompletedLessons = completedLessons,
             DueReviews = dueReviews,
             CurrentStreak = StudyEngine.CalculateCurrentStreak(activityDates, DateTime.UtcNow),
-            // En uzun seri, kaydedilmiş değerle hesaplananın büyüğü. Dil
-            // süzgeci varken hesabın toplam rekoru değil o dilinki alınır,
-            // yoksa yeni başlanan bir dil ilk günden 40 günlük seri gösterirdi.
+            // En uzun seri, kaydedilmiş değerle hesaplananın büyüğü. Hesabın
+            // toplam rekoru değil, code'un çözüldüğü dilin kendi profili
+            // alınır -- yoksa yeni başlanan bir dil ilk günden hesabın en
+            // uzun serisini (başka bir dilden) gösterirdi.
             LongestStreak = Math.Max(
-                languageProfile?.LongestStreak ?? (code.Length == 0 ? user.LongestStreak : 0),
+                languageProfile?.LongestStreak ?? 0,
                 StudyEngine.CalculateLongestStreak(activityDates)),
-            TotalXp = languageProfile?.TotalXp ?? (code.Length == 0 ? user.TotalXp : 0),
-            Level = languageProfile?.Level ?? (code.Length == 0 ? user.Level : 1)
+            TotalXp = languageProfile?.TotalXp ?? 0,
+            Level = languageProfile?.Level ?? 1
         });
     }
 
     /// <summary>
-    /// Isı haritası. <paramref name="languageCode"/> verildiğinde yalnızca o
-    /// dilin günleri sayılır.
+    /// Isı haritası. <paramref name="languageCode"/> verildiğinde o dilin
+    /// günleri sayılır; boş bırakılırsa kullanıcının o anki hedef diline
+    /// düşülür, hesabın tamamına değil.
     /// </summary>
     [HttpGet("heatmap")]
     [ProducesResponseType(typeof(IEnumerable<HeatmapPointDto>), StatusCodes.Status200OK)]
@@ -137,11 +142,12 @@ public class StatisticsController : ControllerBase
             return BadRequest("from must be earlier than or equal to to.");
         }
 
+        var code = await LanguageProgressEngine.ResolveOrDefaultAsync(_unitOfWork, userId.Value, languageCode);
         var activities = await GetActivitiesAsync(
             userId.Value,
             period.Value.Start,
             period.Value.EndExclusive,
-            LanguageProgressEngine.Normalize(languageCode));
+            code);
         var byDate = activities
             .GroupBy(activity => activity.OccurredAt.Date)
             .ToDictionary(
@@ -172,8 +178,9 @@ public class StatisticsController : ControllerBase
     }
 
     /// <summary>
-    /// Aralıktaki ham aktiviteler. <paramref name="languageCode"/> boş string
-    /// ise dil süzgeci uygulanmaz — hesabın tamamı sayılır.
+    /// Aralıktaki ham aktiviteler, tek bir dile ait. Çağıranlar
+    /// <paramref name="languageCode"/>'u her zaman çözülmüş (boş olmayan)
+    /// hâliyle verir -- bkz. LanguageProgressEngine.ResolveOrDefaultAsync.
     /// </summary>
     private async Task<List<StudyActivity>> GetActivitiesAsync(
         int userId,
@@ -184,7 +191,7 @@ public class StatisticsController : ControllerBase
         return (await _unitOfWork.Repository<StudyActivity>()
                 .FindAsync(activity => activity.UserId == userId &&
                     activity.OccurredAt >= start && activity.OccurredAt < endExclusive &&
-                    (languageCode == "" || activity.LanguageCode == languageCode)))
+                    activity.LanguageCode == languageCode))
             .OrderBy(activity => activity.OccurredAt)
             .ToList();
     }

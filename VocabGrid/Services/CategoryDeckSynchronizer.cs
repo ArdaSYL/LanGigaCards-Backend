@@ -473,7 +473,7 @@ internal static class CategoryDeckSynchronizer
                 DeckId = deck.Id,
                 Term = term,
                 Translation = translation,
-                ExampleSentence = string.Empty,
+                ExampleSentence = ExampleSentenceTemplates.For(template.Slug, targetCode, term) ?? string.Empty,
                 CreatedAt = now,
             });
             added++;
@@ -544,7 +544,7 @@ internal static class CategoryDeckSynchronizer
             {
                 Term = term,
                 Translation = translation,
-                ExampleSentence = string.Empty,
+                ExampleSentence = ExampleSentenceTemplates.For(template.Slug, targetCode, term) ?? string.Empty,
                 CreatedAt = now,
             });
         }

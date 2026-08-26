@@ -17,6 +17,12 @@ namespace VocabGrid.Entities;
 /// dillerdeki XP, en uzun seri) orada kalır ve rozet değerlendirmesi
 /// oradan okur. Buradaki sayılar tek bir dile aittir.
 ///
+/// Anahtar yalnızca hedef dildir (<see cref="LanguageCode"/>). Ana dil artık
+/// öğrenme bağlamının bir parçası değil, hesabın tek bir uygulama dili
+/// tercihi -- Duolingo'daki "uygulama dili" gibi, tüm hedef diller arasında
+/// paylaşılır ve hiçbirinin profiliyle eşleşmez. Bu yüzden anahtar burada
+/// tekrar sadece hedef dile indirgendi.
+///
 /// Satır, o dil ilk kez hedef seçildiğinde oluşur ve
 /// <see cref="IsSetupCompleted"/> false başlar — istemci bunu görünce
 /// seviye ölçümü ve kategori seçimi penceresini açar.

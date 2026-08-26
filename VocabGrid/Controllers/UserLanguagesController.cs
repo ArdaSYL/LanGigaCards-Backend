@@ -133,11 +133,11 @@ public class UserLanguagesController : ControllerBase
             return Unauthorized();
         }
 
-        if (LanguageProgressEngine.Normalize(user.NativeLanguageCode) == code)
-        {
-            return BadRequest("Target language cannot be the same as the native language.");
-        }
-
+        // NativeLanguageCode artık öğrenilebilecek dilleri kısıtlamıyor -- o
+        // alan yalnızca arayüz dilini (App Language) tutuyor, hedef dil
+        // seçimiyle ilişkisi kalmadı. Bu kontrol eski eşleşmiş
+        // native/target modelinden kalmıştı ve App Language'a denk gelen
+        // her dile geçişi sessizce 400'lüyordu.
         var name = await ResolveLanguageNameAsync(code, dto.LanguageName);
 
         var profile = await LanguageProgressEngine.GetOrCreateAsync(_unitOfWork, userId.Value, code, name);

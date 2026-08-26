@@ -58,12 +58,43 @@ internal static class LanguageProgressEngine
     }
 
     /// <summary>
-    /// Kullanıcının o dildeki profilini getirir, yoksa oluşturur.
+    /// Normalizes [languageCode], falling back to the caller's own current
+    /// target language when it's not given.
+    ///
+    /// Several list/summary endpoints (due reviews, streak, daily summary,
+    /// statistics overview/heatmap, deck list) take an optional languageCode
+    /// query parameter, but historically treated "not given" as "no filter
+    /// at all" rather than "my current language" -- every one of these
+    /// endpoints then silently mixed every language the user had ever
+    /// studied into one list/count, because the app's own client never
+    /// actually sends this parameter. Each language a learner studies is
+    /// meant to be its own isolated space (own decks, own review queue, own
+    /// streak, own stats); "not specified" has to mean "whichever language
+    /// I'm currently in", not "all of them at once". Call this instead of
+    /// bare <see cref="Normalize"/> wherever an omitted languageCode should
+    /// resolve to the current session's language rather than disable
+    /// filtering.
+    /// </summary>
+    internal static async Task<string> ResolveOrDefaultAsync(IUnitOfWork unitOfWork, int userId, string? languageCode)
+    {
+        var code = Normalize(languageCode);
+        if (code.Length > 0)
+        {
+            return code;
+        }
+
+        var user = await unitOfWork.Repository<User>().GetByIdAsync(userId);
+        return Normalize(user?.TargetLanguageCode);
+    }
+
+    /// <summary>
+    /// Kullanıcının o hedef dildeki profilini getirir, yoksa oluşturur.
     ///
     /// Yeni satır <see cref="UserLanguageProfile.IsSetupCompleted"/> false
-    /// ile açılır: dil ilk kez seçilmiştir ve istemcinin seviye ölçümü ile
-    /// kategori seçimini sorması gerekir. Var olan satır asla sıfırlanmaz —
-    /// öğrenen eski bir dile geri döndüğünde serisi ve XP'si yerindedir.
+    /// ile açılır: dil ilk kez hedef seçilmiştir ve istemcinin seviye ölçümü
+    /// ile kategori seçimini sorması gerekir. Var olan satır asla
+    /// sıfırlanmaz — öğrenen eski bir dile geri döndüğünde serisi ve XP'si
+    /// yerindedir.
     /// </summary>
     internal static async Task<UserLanguageProfile?> GetOrCreateAsync(
         IUnitOfWork unitOfWork,
@@ -79,33 +110,30 @@ internal static class LanguageProgressEngine
         }
 
         var repository = unitOfWork.Repository<UserLanguageProfile>();
-        var existing = (await repository.FindAsync(p => p.UserId == userId && p.LanguageCode == code))
-            .FirstOrDefault();
-        if (existing is not null)
-        {
-            // Ad boş kalmış eski satırlar (geçiş sırasında dil adı
-            // bilinmiyordu) ilk fırsatta doldurulur.
-            if (string.IsNullOrWhiteSpace(existing.LanguageName) && !string.IsNullOrWhiteSpace(languageName))
+        var profile = await ConcurrentSingleton.GetOrCreateAsync(
+            unitOfWork,
+            find: async () => (await repository.FindAsync(p => p.UserId == userId && p.LanguageCode == code))
+                .FirstOrDefault(),
+            create: () => new UserLanguageProfile
             {
-                existing.LanguageName = languageName.Trim();
-                repository.Update(existing);
-            }
+                UserId = userId,
+                LanguageCode = code,
+                LanguageName = (languageName ?? string.Empty).Trim(),
+                ProficiencyLevel = string.IsNullOrWhiteSpace(proficiencyLevel) ? "Beginner" : proficiencyLevel.Trim(),
+                DifficultyMode = DifficultyModeFor(proficiencyLevel),
+                IsSetupCompleted = false
+            });
 
-            return existing;
+        // Ad boş kalmış eski satırlar (geçiş sırasında dil adı bilinmiyordu)
+        // ilk fırsatta doldurulur. Yeni oluşturulan satırda zaten dolu, bu
+        // dal yalnızca önceden var olan satırlar için anlamlı.
+        if (string.IsNullOrWhiteSpace(profile.LanguageName) && !string.IsNullOrWhiteSpace(languageName))
+        {
+            profile.LanguageName = languageName.Trim();
+            repository.Update(profile);
         }
 
-        var created = new UserLanguageProfile
-        {
-            UserId = userId,
-            LanguageCode = code,
-            LanguageName = (languageName ?? string.Empty).Trim(),
-            ProficiencyLevel = string.IsNullOrWhiteSpace(proficiencyLevel) ? "Beginner" : proficiencyLevel.Trim(),
-            DifficultyMode = DifficultyModeFor(proficiencyLevel),
-            IsSetupCompleted = false
-        };
-
-        await repository.AddAsync(created);
-        return created;
+        return profile;
     }
 
     /// <summary>
